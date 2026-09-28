@@ -17,6 +17,9 @@ backup-*.db
 # local PostgreSQL cluster created by `npm run db:pg`
 .pgdata/
 
+# database snapshots written by Settings -> Backup
+backups/
+
 # env
 .env
 .env*.local

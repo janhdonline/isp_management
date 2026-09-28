@@ -14,12 +14,11 @@ import path from "node:path";
 import fs from "node:fs";
 import Database from "better-sqlite3";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { databaseUrl } from "../src/lib/db-url";
 import { PrismaClient } from "../src/generated/prisma/client";
 
 const sqliteFile = path.resolve(process.argv[2] ?? "./dev.db");
-const targetUrl =
-  process.env.DATABASE_URL ??
-  "postgresql://postgres:postgres@127.0.0.1:5432/isp?schema=public";
+const targetUrl = databaseUrl();
 
 if (!fs.existsSync(sqliteFile)) {
   console.error(`SQLite file not found: ${sqliteFile}`);

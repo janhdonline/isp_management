@@ -3,11 +3,19 @@ import { NextResponse, type NextRequest } from "next/server";
 const SESSION_COOKIE = "isp_session";
 const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/health"];
 
+/**
+ * Called by a scheduler rather than a browser, so it carries no session cookie
+ * and authenticates with a bearer token instead. The route re-checks the token
+ * itself and stays disabled when CRON_SECRET is unset.
+ */
+const TOKEN_PATHS = ["/api/cron"];
+
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (
     PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ||
+    TOKEN_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
     pathname.includes(".")

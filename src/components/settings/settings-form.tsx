@@ -155,7 +155,15 @@ function SettingInput({ field, value }: { field: SettingField; value: string }) 
 /* Action buttons                                                      */
 /* ------------------------------------------------------------------ */
 
-export function TestButton({ action, label }: { action: () => Promise<AcctFormState>; label: string }) {
+export function TestButton({
+  action,
+  label,
+  channel,
+}: {
+  action: (channel?: string) => Promise<AcctFormState>;
+  label: string;
+  channel?: string;
+}) {
   const [busy, setBusy] = useState(false);
   const { success, error } = useToast();
   return (
@@ -165,7 +173,7 @@ export function TestButton({ action, label }: { action: () => Promise<AcctFormSt
       loading={busy}
       onClick={async () => {
         setBusy(true);
-        const r = await action();
+        const r = await action(channel);
         setBusy(false);
         if (r.formError) error(r.formError);
         else success(r.success ?? "OK");
@@ -173,6 +181,23 @@ export function TestButton({ action, label }: { action: () => Promise<AcctFormSt
     >
       {busy ? "Testing..." : label}
     </Button>
+  );
+}
+
+/** One "Test connection" button per integration, each naming its channel. */
+export function TestButtons({
+  action,
+  channels,
+}: {
+  action: (channel?: string) => Promise<AcctFormState>;
+  channels: { channel: string; label: string }[];
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {channels.map((c) => (
+        <TestButton key={c.channel} action={action} label={c.label} channel={c.channel} />
+      ))}
+    </div>
   );
 }
 

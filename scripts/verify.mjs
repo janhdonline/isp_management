@@ -279,6 +279,70 @@ console.log("\nPhase 2 pages");
   check("report accepts a custom date range", reports.status === 200, `got ${reports.status}`);
 }
 
+/* ---------------------------------------------------------------- */
+console.log("\nbackground jobs");
+{
+  // The scheduled endpoint authenticates with a bearer token rather than a
+  // session cookie, so it is checked on its own terms.
+  const secret = process.env.CRON_SECRET;
+  check("CRON_SECRET is configured", Boolean(secret));
+
+  const noToken = await fetch(`${BASE}/api/cron`, { method: "POST" });
+  check("cron refuses a request with no token", noToken.status === 401, `got ${noToken.status}`);
+
+  const badToken = await fetch(`${BASE}/api/cron`, {
+    method: "POST",
+    headers: { authorization: "Bearer wrong" },
+  });
+  check("cron refuses a wrong token", badToken.status === 401, `got ${badToken.status}`);
+
+  if (secret) {
+    const first = await fetch(`${BASE}/api/cron`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}` },
+    });
+    const firstBody = await first.json();
+    check("cron runs with a valid token", first.status === 200, `got ${first.status}`);
+    check(
+      "cron reports every job",
+      ["invoices", "expiry", "messages", "backup"].every((k) => k in (firstBody.results ?? {})),
+      JSON.stringify(firstBody.results ?? {})
+    );
+
+    // Second run must be a no-op: the jobs check what they have already done.
+    const second = await fetch(`${BASE}/api/cron`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}` },
+    });
+    const secondBody = await second.json();
+    const r = secondBody.results ?? {};
+    check("a repeated run bills nothing twice", r.invoices?.ran === 0, `ran=${r.invoices?.ran}`);
+    check("a repeated run suspends nothing twice", r.expiry?.ran === 0, `ran=${r.expiry?.ran}`);
+    check("a repeated run resends nothing", r.messages?.ran === 0, `ran=${r.messages?.ran}`);
+    check("a repeated run takes no second backup", r.backup?.ran === 0, `ran=${r.backup?.ran}`);
+  }
+}
+
+/* ---------------------------------------------------------------- */
+console.log("\nbackups");
+{
+  const list = (await api("/api/backup/download?file=does-not-exist.gz")).status;
+  check("downloading a missing backup is 404", list === 404, `got ${list}`);
+
+  const noParam = await fetch(`${BASE}/api/backup/download`, { headers: { cookie } });
+  check("download without a file parameter is 400", noParam.status === 400, `got ${noParam.status}`);
+
+  // The path is rebuilt from the directory plus the basename, so a traversal
+  // attempt must not escape it.
+  const traversal = await fetch(
+    `${BASE}/api/backup/download?file=${encodeURIComponent("../../.env")}`,
+    { headers: { cookie } }
+  );
+  check("a path traversal attempt does not leak .env", traversal.status === 404, `got ${traversal.status}`);
+  const leak = await traversal.text();
+  check("the traversal response contains no secret", !leak.includes("AUTH_SECRET"));
+}
+
 console.log(`\n${"─".repeat(46)}`);
 console.log(`  ${pass} passed, ${fail} failed`);
 console.log(`${"─".repeat(46)}\n`);

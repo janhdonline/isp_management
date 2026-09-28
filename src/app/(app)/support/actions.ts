@@ -7,6 +7,7 @@ import { type Prisma } from "@/generated/prisma/client";
 import { requirePermission } from "@/lib/auth";
 import { nextNumber, type Tx } from "@/lib/counter";
 import { logActivity, prismaLog } from "@/lib/services/activity";
+import { dispatch } from "@/lib/services/messaging";
 import { addDays, round2, startOfDay } from "@/lib/utils";
 import {
   ATTENDANCE_STATUSES,
@@ -496,6 +497,77 @@ async function resolveRecipients(input: {
   return prisma.customer.findMany({ where, select: { id: true, name: true, phone: true, username: true, monthlyBill: true, expiryDate: true, areaId: true, packageId: true, connectionStatus: true } });
 }
 
+/**
+ * Sends a batch and records the real outcome of each message. Rows are written
+ * first so a crash mid-send leaves a visible "sending" record rather than a
+ * silent gap, and the daily credit counter moves by what was actually sent.
+ */
+async function deliverNow(
+  items: { channel: string; recipient: string; customerId: string | null; subject: string | null; body: string; template: string | null }[],
+  userId: string
+) {
+  const created = await prisma.notification.createMany({
+    data: items.map((i) => ({ ...i, status: "Sending", sentById: userId })),
+  });
+  void created;
+
+  const pending = await prisma.notification.findMany({
+    where: { status: "Sending", sentById: userId, sentAt: null },
+    select: { id: true, channel: true, recipient: true, subject: true, body: true },
+    orderBy: { createdAt: "desc" },
+    take: items.length,
+  });
+
+  let sent = 0;
+  let failed = 0;
+  let firstError = "";
+
+  for (const m of pending) {
+    const result = await dispatch(m.channel, m.recipient, m.subject, m.body);
+    if (result.ok) {
+      sent += 1;
+      await prisma.notification.update({
+        where: { id: m.id },
+        data: { status: "Sent", sentAt: new Date(), error: null },
+      });
+    } else {
+      failed += 1;
+      firstError ||= result.error;
+      await prisma.notification.update({
+        where: { id: m.id },
+        data: {
+          status: result.configured ? "Failed" : "Pending",
+          error: result.error,
+          sentAt: result.configured ? new Date() : null,
+        },
+      });
+    }
+  }
+
+  const today = startOfDay(new Date());
+  const credit = await prisma.smsCredit.findFirst({ where: { date: today } });
+  if (credit) {
+    await prisma.smsCredit.update({
+      where: { id: credit.id },
+      data: { sent: { increment: sent }, failed: { increment: failed } },
+    });
+  } else {
+    await prisma.smsCredit.create({ data: { date: today, sent, failed, balance: 0 } });
+  }
+
+  await logActivity(
+    {
+      action: "Send",
+      entity: "Notification",
+      entityId: undefined,
+      summary: `Delivered ${sent}/${items.length} message(s)${failed ? `, ${failed} failed` : ""}`,
+    },
+    userId
+  );
+
+  return { sent, failed, firstError };
+}
+
 export async function sendMessageAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const session = await requirePermission("notifications.create");
   const parsed = sendSchema.safeParse(Object.fromEntries(formData));
@@ -513,50 +585,72 @@ export async function sendMessageAction(_prev: ActionState, formData: FormData):
 
   const template = SMS_TEMPLATES.find((t) => t.key === formData.get("template"));
 
-  const rows = recipients.map((c) => ({
-    channel: d.channel,
-    recipient: c.phone,
-    customerId: c.id,
-    template: template?.key ?? null,
-    subject: d.subject || null,
-    body: d.body
+  const render = (c: (typeof recipients)[number]) =>
+    d.body
       .replace(/\{name\}/g, c.name)
       .replace(/\{amount\}/g, String(c.monthlyBill))
       .replace(/\{date\}/g, c.expiryDate ? c.expiryDate.toDateString() : "")
-      .replace(/\{username\}/g, c.username),
-    status: scheduled ? "Scheduled" : "Sent",
-    sentById: session.id,
-    scheduledAt: scheduled ? new Date(d.schedule!) : null,
-    sentAt: scheduled ? null : new Date(),
-  }));
+      .replace(/\{username\}/g, c.username);
 
-  await prisma.$transaction(async (tx) => {
-    await tx.notification.createMany({ data: rows });
-    if (!scheduled) {
-      const today = startOfDay(new Date());
-      const existing = await tx.smsCredit.findFirst({ where: { date: today } });
-      if (existing) {
-        await tx.smsCredit.update({ where: { id: existing.id }, data: { sent: { increment: rows.length } } });
-      } else {
-        await tx.smsCredit.create({ data: { date: today, sent: rows.length, balance: 0 } });
-      }
-    }
-    await prismaLog(
-      tx,
-      {
-        action: "Send",
-        entity: "Notification",
-        entityId: undefined,
-        summary: `${scheduled ? "Scheduled" : "Sent"} ${rows.length} ${d.channel} message(s)`,
-      },
-      session.id
-    );
-  });
+  if (scheduled) {
+    // A scheduled message is only queued; the cron route delivers it.
+    const rows = recipients.map((c) => ({
+      channel: d.channel,
+      recipient: c.phone,
+      customerId: c.id,
+      template: template?.key ?? null,
+      subject: d.subject || null,
+      body: render(c),
+      status: "Scheduled",
+      sentById: session.id,
+      scheduledAt: new Date(d.schedule!),
+    }));
+
+    await prisma.$transaction(async (tx) => {
+      await tx.notification.createMany({ data: rows });
+      await prismaLog(
+        tx,
+        {
+          action: "Schedule",
+          entity: "Notification",
+          entityId: undefined,
+          summary: `Scheduled ${rows.length} ${d.channel} message(s) for ${new Date(d.schedule!).toLocaleString()}`,
+        },
+        session.id
+      );
+    });
+
+    revalidatePath("/notifications");
+    revalidatePath("/notifications/history");
+    return { success: `Scheduled ${rows.length} ${d.channel} message(s).` };
+  }
+
+  // Immediate: deliver each message, then record what actually happened. A
+  // provider outage marks the row Failed with the reason instead of claiming a
+  // send that never left the building.
+  const sent = await deliverNow(
+    recipients.map((c) => ({
+      channel: d.channel,
+      recipient: c.phone,
+      customerId: c.id,
+      subject: d.subject || null,
+      body: render(c),
+      template: template?.key ?? null,
+    })),
+    session.id
+  );
 
   revalidatePath("/notifications");
   revalidatePath("/notifications/history");
+
+  if (sent.failed === 0) {
+    return { success: `Sent ${sent.sent} ${d.channel} message(s).` };
+  }
+  if (sent.sent === 0) {
+    return { formError: `Nothing was delivered — ${sent.firstError}` };
+  }
   return {
-    success: `${scheduled ? "Scheduled" : "Sent"} ${rows.length} ${d.channel} message${rows.length === 1 ? "" : "s"}.`,
+    formError: `Sent ${sent.sent}, failed ${sent.failed}. First error: ${sent.firstError}`,
   };
 }
 

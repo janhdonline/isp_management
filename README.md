@@ -161,6 +161,11 @@ before anything is written.
 and `status` on the invoice are denormalised for list speed, but they are only
 ever written by `recomputeCustomerBilling` / `recomputeInvoiceStatus`.
 
+**One connection string.** `src/lib/db-url.ts` owns it. The app, the Prisma CLI,
+the seed and the maintenance scripts all import the same constant, because a
+fallback that disagrees with `.env` silently points them at a different
+database — and only the Next.js process reads `.env` automatically.
+
 **Device integrations sit behind adapters.** `NetworkAdapter` is the contract;
 `MikrotikAdapter` talks RouterOS REST and `DatabaseNetworkAdapter` backs the
 demo. Nothing in the UI knows the difference, and adding a vendor means writing
@@ -229,6 +234,52 @@ exceed the invoice balance.
 
 ---
 
+## Scheduled work
+
+Everything recurring runs through one endpoint rather than living in the request
+path, so it can be driven by any scheduler:
+
+```bash
+curl -X POST https://your-host/api/cron -H "authorization: Bearer $CRON_SECRET"
+```
+
+It is refused with a 401 unless `CRON_SECRET` is set — the route stays disabled
+rather than defaulting to open, because it raises invoices, messages customers
+and writes files. With the secret in place it runs four jobs:
+
+| Job | What it does |
+| --- | --- |
+| `invoices` | Raises the subscription invoice for every active customer on the configured cycle, skipping anyone already invoiced this month. |
+| `expiry` | Counts expiring and expired customers and, when auto-suspension is on, suspends those past the grace period. |
+| `messages` | Delivers queued messages whose scheduled time has arrived, claiming each row before sending so a retry cannot double-send. |
+| `backup` | Takes one automatic snapshot a day, once the configured time has passed. |
+
+**Every job is idempotent.** Running it twice in a day bills nothing twice,
+suspends nothing twice, resends nothing and takes no second backup — the check
+is part of each job rather than a lock, so a retried request is safe.
+
+### Messaging
+
+SMS, email and WhatsApp go out for real. `src/lib/services/messaging.ts` holds
+one adapter per channel over the credentials in Settings → API, and the delivery
+result is what gets recorded: a message that fails stores the provider's reason
+in `error`, and one whose channel has no credentials is marked `Pending` rather
+than `Sent`. The log never claims a delivery that did not happen.
+
+### Backups
+
+Settings → Backup writes real snapshots and can restore them:
+
+- `pg_dump` in custom format when the binary is on `PATH`
+- otherwise a gzipped JSON export through Prisma, which is what the bundled
+  development server uses
+
+Either way the row, the download and the restore button in the history table
+work, and a restore replays the whole database in a single transaction so it can
+never stop halfway. Retention is applied after each backup.
+
+---
+
 ## What is in the system
 
 **Delivered:** Dashboard · Customers (all views + profile) · Packages (with
@@ -255,4 +306,6 @@ are reached through their pages, not through `/api`.
 rather than the markup: the payment chain from ISP.md §21 (payment → invoice →
 customer due → account balance → receipt → audit row), that overpayment is
 refused, that unauthenticated and under-privileged requests are rejected, that
-all 68 pages render, and that report date ranges are honoured.
+all 68 pages render, that report date ranges are honoured, that the scheduled
+endpoint refuses a missing or wrong token, and that running it twice in a row
+changes nothing the second time. 50 checks.

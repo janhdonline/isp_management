@@ -6,16 +6,13 @@
  * Run with:  npx prisma db seed
  */
 import { PrismaPg } from "@prisma/adapter-pg";
+import { databaseUrl } from "../src/lib/db-url";
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { DEFAULT_SETTINGS } from "../src/lib/settings";
 import { buildPermissionKeys } from "../src/lib/permissions";
 
-const adapter = new PrismaPg({
-  connectionString:
-    process.env.DATABASE_URL ??
-    "postgresql://postgres:postgres@127.0.0.1:5432/isp?schema=public",
-});
+const adapter = new PrismaPg({ connectionString: databaseUrl() });
 const prisma = new PrismaClient({ adapter });
 
 // --- deterministic pseudo-random so reseeding is reproducible -------------

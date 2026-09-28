@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/auth";
 import { logActivity } from "@/lib/services/activity";
 import { transferFunds, recordExpense } from "@/lib/services/billing-queries";
@@ -111,43 +110,79 @@ export async function saveSettingsAction(
   return { success: "Settings saved." };
 }
 
-export async function testSmsProviderAction(): Promise<AcctFormState> {
+export async function testSmsProviderAction(
+  channel: string = "SMS"
+): Promise<AcctFormState> {
   const session = await requirePermission("settings.edit");
-  const { getSettings } = await import("@/lib/settings");
-  const s = await getSettings();
-  if (!s["api.smsApiKey"]) {
-    return { formError: "No SMS API key configured. Add one under Settings → SMS / API first." };
-  }
+  const { testConnection } = await import("@/lib/services/messaging");
+  const result = await testConnection(channel);
+
   await logActivity(
-    { action: "Test", entity: "Setting", entityId: "api.smsProvider", summary: `SMS provider test run against ${s["api.smsProvider"]}` },
+    {
+      action: "Test",
+      entity: "Setting",
+      entityId: `api.${channel.toLowerCase()}`,
+      summary: `${channel} connection test: ${result.ok ? "ok" : "failed"} — ${result.message}`,
+    },
     session.id
   );
-  return { success: `Test request accepted by ${s["api.smsProvider"]} (${s["api.smsUrl"]}).` };
+
+  revalidatePath("/settings/api");
+  return result.ok ? { success: result.message } : { formError: result.message };
 }
 
 export async function backupNowAction(): Promise<AcctFormState> {
   const session = await requirePermission("settings.edit");
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const run = promisify(execFile);
+  const { createBackup, pruneBackups } = await import("@/lib/services/backup");
+  const { getSetting } = await import("@/lib/settings");
 
-  const fileName = `backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.db`;
-  try {
-    await run("sqlite3", ["./dev.db", `.backup '${fileName}'`]).catch(async () => {
-      // sqlite3 CLI is optional; fall back to a simple file copy
-      const { copyFile } = await import("node:fs/promises");
-      await copyFile("./dev.db", fileName);
-    });
-    const { stat } = await import("node:fs/promises");
-    const info = await stat(fileName);
-    await prisma.backup.create({
-      data: { fileName, size: info.size, type: "Manual", status: "Completed", createdById: session.id },
-    });
-    revalidatePath("/settings/backup");
-    return { success: `Backup created: ${fileName} (${(info.size / 1024 / 1024).toFixed(2)} MB).` };
-  } catch (e) {
-    return { formError: e instanceof Error ? e.message : "Backup failed" };
-  }
+  const result = await createBackup("Manual");
+  if (!result.ok) return { formError: result.error };
+
+  // Apply the retention policy so the directory cannot grow without bound.
+  const keep = Number(await getSetting("backup.retention", "7"));
+  const pruned = await pruneBackups(Number.isFinite(keep) ? keep : 7);
+
+  await logActivity(
+    {
+      action: "Backup",
+      entity: "Backup",
+      entityId: result.fileName,
+      summary: `Manual backup ${result.fileName} (${result.format}) — ${result.sizeLabel}${pruned ? `, pruned ${pruned} old` : ""}`,
+    },
+    session.id
+  );
+
+  revalidatePath("/settings/backup");
+  return {
+    success: `Backup created: ${result.fileName} (${result.format}, ${result.sizeLabel})${
+      pruned ? ` — pruned ${pruned} old backup(s)` : ""
+    }.`,
+  };
+}
+
+export async function restoreBackupAction(fileName: string): Promise<AcctFormState> {
+  const session = await requirePermission("settings.approve");
+  const { restoreBackup } = await import("@/lib/services/backup");
+
+  const result = await restoreBackup(fileName);
+  if (!result.ok) return { formError: result.error };
+
+  await logActivity(
+    {
+      action: "Restore",
+      entity: "Backup",
+      entityId: fileName,
+      summary: `Restored ${fileName} (${result.format}, ${result.rows} rows)`,
+    },
+    session.id
+  );
+
+  // A restore replaces data everywhere, so the whole shell has to re-read it.
+  revalidatePath("/", "layout");
+  return {
+    success: `Restored ${fileName} — ${result.rows.toLocaleString()} rows back in (${result.format}). Sign in again if you were logged out.`,
+  };
 }
 
 export async function testMikrotikAction(): Promise<AcctFormState> {

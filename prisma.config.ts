@@ -1,12 +1,14 @@
 import { defineConfig } from "prisma/config";
 import path from "node:path";
+import { DEFAULT_DATABASE_URL } from "./src/lib/db-url";
 
 /**
  * Prisma 7 keeps connection strings out of schema.prisma.
  *
- * Point DATABASE_URL at any PostgreSQL server. `npm run db:pg` starts a real
- * PostgreSQL 18 on the default loopback address with nothing to install (see
- * scripts/pg-dev.mjs), so local and production run the same SQL.
+ * The fallback is the same constant the app uses (src/lib/db-url.ts), so the
+ * CLI, the seed and the running server cannot end up on different databases.
+ * `npm run db:pg` starts a real PostgreSQL on that default address; point
+ * DATABASE_URL anywhere else for a hosted server.
  */
 export default defineConfig({
   schema: path.join("prisma", "schema.prisma"),
@@ -14,8 +16,6 @@ export default defineConfig({
     seed: "tsx prisma/seed.ts",
   },
   datasource: {
-    url:
-      process.env.DATABASE_URL ??
-      "postgresql://postgres:postgres@127.0.0.1:5432/isp?schema=public",
+    url: process.env.DATABASE_URL?.trim() || DEFAULT_DATABASE_URL,
   },
 });

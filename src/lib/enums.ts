@@ -132,7 +132,13 @@ export const GENDERS = ["Male", "Female", "Other"] as const;
 
 export const NOTIFICATION_CHANNELS = ["SMS", "Email", "WhatsApp"] as const;
 
-export const NOTIFICATION_STATUSES = ["Sent", "Failed", "Pending", "Scheduled"] as const;
+export const NOTIFICATION_STATUSES = [
+  "Scheduled",
+  "Sending",
+  "Sent",
+  "Failed",
+  "Pending",
+] as const;
 
 export const EMPLOYEE_STATUSES = ["Active", "On Leave", "Inactive"] as const;
 
@@ -208,6 +214,7 @@ export const STATUS_STYLES: Record<string, string> = {
   Failed: "bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-400",
   Sent: "bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400",
   Scheduled: "bg-indigo-50 text-indigo-700 ring-indigo-600/20 dark:bg-indigo-500/10 dark:text-indigo-400",
+  Sending: "bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-500/10 dark:text-blue-400",
   Completed: "bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400",
   Approved: "bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400",
   Rejected: "bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-400",

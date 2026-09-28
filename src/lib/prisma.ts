@@ -1,5 +1,6 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
+import { databaseUrl } from "@/lib/db-url";
 
 /**
  * The single PostgreSQL client for the whole app.
@@ -13,9 +14,7 @@ import { PrismaClient } from "@/generated/prisma/client";
  * production. There is no SQLite fallback: the data model, the migrations and
  * every query are PostgreSQL.
  */
-const connectionString =
-  process.env.DATABASE_URL ??
-  "postgresql://postgres:postgres@127.0.0.1:5432/postgres?schema=public";
+const connectionString = databaseUrl();
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
