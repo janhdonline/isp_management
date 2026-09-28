@@ -4,6 +4,9 @@ out
 build
 dist
 
+# Prisma client — regenerate with `npm run db:generate`
+src/generated/
+
 # database
 *.db
 *.db-journal
