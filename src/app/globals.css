@@ -1,0 +1,202 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   ISP Management System - Design tokens
+   Semantic tokens so every module reads the same visual language.
+   ========================================================================== */
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-mono-jet), ui-monospace, "SFMono-Regular", monospace;
+
+  --radius-card: 0.875rem;
+
+  /* Brand */
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #d9e5ff;
+  --color-brand-200: #bcd2ff;
+  --color-brand-300: #8eb5ff;
+  --color-brand-400: #598eff;
+  --color-brand-500: #3163ff;
+  --color-brand-600: #1c3cf5;
+  --color-brand-700: #182ce1;
+  --color-brand-800: #1a27b6;
+  --color-brand-900: #1c268f;
+  --color-brand-950: #141a57;
+
+  /* Sidebar */
+  --color-side-50: #f8fafc;
+  --color-side-100: #f1f5f9;
+  --color-side-200: #e2e8f0;
+  --color-side-600: #475569;
+  --color-side-700: #334155;
+  --color-side-800: #1e293b;
+  --color-side-900: #0f172a;
+  --color-side-950: #020617;
+}
+
+:root {
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-3: #f1f5f9;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --fg: #0f172a;
+  --fg-muted: #64748b;
+  --fg-subtle: #94a3b8;
+  --ring: #3163ff;
+  --sidebar: #0f172a;
+  --sidebar-fg: #cbd5e1;
+  --sidebar-active: #ffffff;
+  --sidebar-hover: #1e293b;
+}
+
+.dark {
+  --surface: #0b1120;
+  --surface-2: #0f172a;
+  --surface-3: #1e293b;
+  --border: #1e293b;
+  --border-strong: #334155;
+  --fg: #e2e8f0;
+  --fg-muted: #94a3b8;
+  --fg-subtle: #64748b;
+  --ring: #598eff;
+  --sidebar: #020617;
+  --sidebar-fg: #94a3b8;
+  --sidebar-active: #ffffff;
+  --sidebar-hover: #1e293b;
+}
+
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-fg: var(--sidebar-fg);
+  --color-sidebar-hover: var(--sidebar-hover);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html {
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--surface-2);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Thin, unobtrusive scrollbars everywhere */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg-subtle) 45%, transparent);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg-subtle) 70%, transparent);
+  background-clip: content-box;
+}
+
+@utility card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+@utility focus-ring {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 4px var(--ring);
+}
+
+/* Thin number font variant for stat cards / money columns */
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes isp-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility animate-in-up {
+  animation: isp-fade-in 0.22s ease-out both;
+}
+
+@keyframes isp-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility animate-slide-in {
+  animation: isp-slide-in 0.2s ease-out both;
+}
+
+@keyframes isp-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@utility skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-3);
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--fg-subtle) 18%, transparent),
+    transparent
+  );
+  animation: isp-shimmer 1.4s infinite;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+}

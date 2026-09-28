@@ -1,0 +1,698 @@
+// ISP Management System - Database Schema
+// Provider: sqlite (swap to postgresql/mysql in prisma.config.ts + schema)
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Connection strings are supplied per environment; see prisma.config.ts and
+  // src/lib/db.ts (Prisma 7 moved URLs out of the schema).
+}
+
+// ---------------------------------------------------------------------------
+// Enums (SQLite does not support native enums -> stored as String, validated
+// in src/lib/enums.ts)
+// ---------------------------------------------------------------------------
+
+// User / Role / Permission
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  phone        String?
+  passwordHash String
+  status       String   @default("Active")
+  roleId       String?
+  role         Role?    @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  activityLogs ActivityLog[]     @relation("LogActor")
+  payments     Payment[]         @relation("PaymentCollector")
+  invoices     Invoice[]         @relation("InvoiceCreator")
+  expenses     Expense[]         @relation("ExpenseCreator")
+  customers    Customer[]        @relation("CustomerCreatedBy")
+  tickets      Ticket[]          @relation("TicketCreator")
+  messages     Notification[]    @relation("MessageSender")
+  backups      Backup[]
+
+  @@index([roleId])
+  @@index([status])
+}
+
+model Role {
+  id          String       @id @default(cuid())
+  name        String       @unique
+  description String?
+  isSystem    Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  users       User[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id       String @id @default(cuid())
+  key      String @unique // e.g. "customers.create"
+  resource String // e.g. "Customers"
+  action   String // e.g. "Create"
+  label    String
+  roles    RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  action     String
+  entity     String
+  entityId   String?
+  summary    String
+  meta       String? // JSON
+  ipAddress  String?
+  userAgent  String?
+  actorId    String?
+  actor      User?    @relation("LogActor", fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Geography
+
+model Zone {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  status      String   @default("Active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  areas       Area[]
+
+  @@index([status])
+}
+
+model Area {
+  id        String   @id @default(cuid())
+  name      String
+  code      String?  @unique
+  zoneId    String?
+  zone      Zone?    @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  status    String   @default("Active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customers Customer[]
+  routers   Router[]
+  olts      Olt[]
+  onus      Onu[]
+  employees Employee[]
+  tickets   Ticket[]
+
+  @@unique([name, zoneId])
+  @@index([zoneId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Package
+
+model Package {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  downloadSpeed   Int // Mbps
+  uploadSpeed     Int // Mbps
+  monthlyPrice    Float
+  installationFee Float    @default(0)
+  validityDays    Int      @default(30)
+  billingCycle    String   @default("Monthly")
+  fupLimit        Float? // GB
+  description     String?
+  status          String   @default("Active")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  customers         Customer[]
+  invoices          Invoice[]
+  changeLogs        CustomerPackageChange[]
+  toPackageChanges  CustomerPackageChange[] @relation("ToPackage")
+  tickets           Ticket[]
+  expenses          Expense[]
+
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Customer + Connection
+
+model Customer {
+  id                String    @id @default(cuid())
+  customerCode      String    @unique
+  name              String
+  fatherName        String?
+  motherName        String?
+  phone             String
+  altPhone          String?
+  email             String?
+  nid               String?
+  dateOfBirth       DateTime?
+  gender            String?
+  address           String?
+  areaId            String?
+  area              Area?     @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  customerType      String    @default("Home")
+  photoUrl          String?
+
+  // Connection information
+  username          String    @unique
+  password          String?
+  connectionType    String    @default("PPPoE")
+  packageId         String?
+  package           Package?  @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  ipType            String    @default("Dynamic")
+  ipAddress         String?
+  macAddress        String?
+  routerId          String?
+  router            Router?   @relation(fields: [routerId], references: [id], onDelete: SetNull)
+  oltId             String?
+  olt               Olt?      @relation(fields: [oltId], references: [id], onDelete: SetNull)
+  onuId             String?
+  onu               Onu?      @relation(fields: [onuId], references: [id], onDelete: SetNull)
+  ponPort           String?
+
+  // Dates
+  connectionDate    DateTime  @default(now())
+  billingDate       DateTime?
+  expiryDate        DateTime?
+
+  // Billing snapshot
+  monthlyBill       Float     @default(0)
+  installationFee   Float     @default(0)
+  advancePayment    Float     @default(0)
+  previousDue       Float     @default(0)
+  discount          Float     @default(0)
+  vat               Float     @default(0)
+  totalPayable      Float     @default(0)
+
+  // Status (connection status - see ISP.md section 15)
+  connectionStatus  String    @default("Active") // Active | Suspended | Disconnected | Pending
+  billingStatus     String    @default("Unpaid") // Unpaid | Paid | Partial | Due
+  onlineStatus      String    @default("Offline") // Online | Offline
+  suspendReason     String?
+  suspendedAt       DateTime?
+  disconnectReason  String?
+  disconnectedAt    DateTime?
+  lastOnlineAt      DateTime?
+  loginTime         DateTime?
+  downloadBytes     BigInt    @default(0)
+  uploadBytes       BigInt    @default(0)
+
+  note              String?
+  createdById       String?
+  createdBy         User?     @relation("CustomerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  invoices     Invoice[]
+  payments     Payment[]
+  tickets      Ticket[]
+  sessionLogs  OnlineSession[]
+  packageLogs  CustomerPackageChange[]
+  notifications Notification[]
+  expenses     Expense[]
+
+  @@index([areaId])
+  @@index([packageId])
+  @@index([connectionStatus])
+  @@index([billingStatus])
+  @@index([onlineStatus])
+  @@index([expiryDate])
+  @@index([phone])
+}
+
+model CustomerPackageChange {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  fromPkgId  String?
+  fromPkg    Package? @relation(fields: [fromPkgId], references: [id], onDelete: SetNull)
+  toPkgId    String?
+  toPkg      Package? @relation("ToPackage", fields: [toPkgId], references: [id], onDelete: SetNull)
+  reason     String?
+  changedById String?
+  createdAt  DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Billing
+
+model Invoice {
+  id            String    @id @default(cuid())
+  invoiceNumber String    @unique
+  customerId    String
+  customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  packageId     String?
+  package       Package?  @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  issueDate     DateTime  @default(now())
+  dueDate       DateTime
+  billingFrom   DateTime?
+  billingTo     DateTime?
+  amount        Float
+  discount      Float     @default(0)
+  vat           Float     @default(0)
+  total         Float
+  paid          Float     @default(0)
+  status        String    @default("Due") // Paid | Partial | Due | Overdue | Cancelled
+  note          String?
+  createdById   String?
+  createdBy     User?     @relation("InvoiceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  cancelledAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  payments  Payment[]
+  receipts  Receipt[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([dueDate])
+  @@index([issueDate])
+}
+
+model Payment {
+  id            String   @id @default(cuid())
+  paymentId     String   @unique // human readable e.g. PAY-000123
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  invoiceId     String?
+  invoice       Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  amount        Float
+  discount      Float    @default(0)
+  method        String // Cash | bKash | Nagad | Bank | Card | Online
+  transactionId String?
+  accountId     String
+  account       Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  collectedById String?
+  collectedBy   User?    @relation("PaymentCollector", fields: [collectedById], references: [id], onDelete: SetNull)
+  paymentDate   DateTime @default(now())
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  receipt  Receipt?
+  ledger   AccountTransaction[]
+
+  @@index([customerId])
+  @@index([invoiceId])
+  @@index([accountId])
+  @@index([method])
+  @@index([paymentDate])
+}
+
+model Receipt {
+  id            String   @id @default(cuid())
+  receiptNumber String   @unique
+  paymentId     String   @unique
+  payment       Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  invoiceId     String?
+  invoice       Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  amount        Float
+  method        String
+  status        String   @default("Paid") // Paid | Refunded
+  issuedAt      DateTime @default(now())
+  createdAt     DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Accounts & Expenses
+
+model Account {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  type           String // Cash | Bank | bKash | Nagad | Card | Other
+  openingBalance Float    @default(0)
+  currentBalance Float    @default(0)
+  accountNumber  String?
+  bankName       String?
+  status         String   @default("Active")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  payments    Payment[]
+  expenses    Expense[]
+  transactions AccountTransaction[]
+  transfersFrom AccountTransfer[] @relation("TransferFrom")
+  transfersTo   AccountTransfer[] @relation("TransferTo")
+
+  @@index([type])
+  @@index([status])
+}
+
+model AccountTransaction {
+  id          String   @id @default(cuid())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  type        String // Payment | Expense | Transfer | Refund | Adjustment
+  direction   String // Credit | Debit
+  amount      Float
+  description String?
+  reference   String?
+  paymentId   String?
+  payment     Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  expenseId   String?
+  transferId  String?
+  userId      String?
+  balance     Float
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([accountId])
+  @@index([date])
+  @@index([type])
+}
+
+model AccountTransfer {
+  id            String   @id @default(cuid())
+  reference     String   @unique
+  fromAccountId String
+  fromAccount   Account  @relation("TransferFrom", fields: [fromAccountId], references: [id], onDelete: Restrict)
+  toAccountId   String
+  toAccount     Account  @relation("TransferTo", fields: [toAccountId], references: [id], onDelete: Restrict)
+  amount        Float
+  transferDate  DateTime @default(now())
+  note          String?
+  createdAt     DateTime @default(now())
+}
+
+model Expense {
+  id        String   @id @default(cuid())
+  category  String
+  amount    Float
+  date      DateTime @default(now())
+  accountId String
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  packageId String?
+  package   Package? @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  areaId    String?
+  customerId String?
+  customer  Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  vendor    String?
+  reference String?
+  description String?
+  attachmentUrl String?
+  note      String?
+  createdById String?
+  createdBy User?    @relation("ExpenseCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+  @@index([date])
+  @@index([accountId])
+}
+
+// ---------------------------------------------------------------------------
+// Network (MikroTik / OLT / ONU) - behind service adapters
+// ---------------------------------------------------------------------------
+
+model Router {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  model       String?
+  ipAddress   String
+  location    String?
+  areaId      String?
+  area        Area?     @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  apiPort     Int       @default(8728)
+  apiUser     String?
+  apiSecretEnc String?
+  useSsl      Boolean   @default(false)
+  status      String    @default("Unknown") // Online | Offline | Unknown
+  cpu         Float?
+  ram         Float?
+  uptimeSec   Int?
+  activeUsers Int       @default(0)
+  lastSyncAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  customers Customer[]
+
+  @@index([status])
+  @@index([areaId])
+}
+
+model Olt {
+  id         String   @id @default(cuid())
+  name       String   @unique
+  vendor     String?
+  model      String?
+  ipAddress  String?
+  location   String?
+  areaId     String?
+  area       Area?    @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  ponPorts   Int      @default(0)
+  status     String   @default("Unknown") // Online | Offline | Unknown
+  lastSyncAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  onus      Onu[]
+  customers Customer[]
+
+  @@index([status])
+}
+
+model Onu {
+  id         String   @id @default(cuid())
+  serialNo   String   @unique
+  name       String?
+  vendor     String?
+  oltId      String?
+  olt        Olt?     @relation(fields: [oltId], references: [id], onDelete: SetNull)
+  areaId     String?
+  area       Area?    @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  ponIndex   String?
+  rxPower    Float? // dBm
+  txPower    Float?
+  status     String   @default("Offline") // Online | Offline | Low Signal
+  lastSeenAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  customers Customer[]
+
+  @@index([status])
+  @@index([oltId])
+}
+
+model OnlineSession {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  username   String
+  ipAddress  String?
+  macAddress String?
+  routerId   String?
+  loginTime  DateTime @default(now())
+  logoutTime DateTime?
+  downloadBytes BigInt @default(0)
+  uploadBytes   BigInt @default(0)
+
+  @@index([customerId])
+  @@index([loginTime])
+}
+
+// ---------------------------------------------------------------------------
+// Support
+
+model Ticket {
+  id           String    @id @default(cuid())
+  ticketNumber String    @unique
+  customerId   String?
+  customer     Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  areaId       String?
+  area         Area?     @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  packageId    String?
+  package      Package?  @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  subject      String
+  problem      String
+  description  String?
+  category     String    @default("Other")
+  priority     String    @default("Medium") // Low | Medium | High | Critical
+  status       String    @default("Open") // Open | Pending | In Progress | Resolved | Closed
+  technicianId String?
+  technician   Employee? @relation(fields: [technicianId], references: [id], onDelete: SetNull)
+  createdById  String?
+  createdBy    User?     @relation("TicketCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  resolvedAt   DateTime?
+  closedAt     DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  comments TicketComment[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([technicianId])
+}
+
+model TicketComment {
+  id        String   @id @default(cuid())
+  ticketId  String
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorName String
+  body      String
+  isInternal Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+}
+
+model Employee {
+  id          String    @id @default(cuid())
+  employeeCode String    @unique
+  name        String
+  role        String
+  phone       String
+  email       String?
+  areaId      String?
+  area        Area?     @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  joiningDate DateTime  @default(now())
+  status      String    @default("Active")
+  photoUrl    String?
+  address     String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tickets      Ticket[]
+  attendances  Attendance[]
+  leaves       Leave[]
+  salaries     Salary[]
+
+  @@index([status])
+}
+
+model Attendance {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date       DateTime
+  checkIn    DateTime?
+  checkOut   DateTime?
+  status     String   @default("Present") // Present | Absent | Late | Leave
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@unique([employeeId, date])
+  @@index([date])
+}
+
+model Leave {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType  String
+  startDate  DateTime
+  endDate    DateTime
+  reason     String?
+  status     String   @default("Pending") // Pending | Approved | Rejected
+  approvedBy String?
+  createdAt  DateTime @default(now())
+
+  @@index([employeeId])
+  @@index([status])
+}
+
+model Salary {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  month      String // YYYY-MM
+  basic      Float    @default(0)
+  allowance  Float    @default(0)
+  bonus      Float    @default(0)
+  deduction  Float    @default(0)
+  advance    Float    @default(0)
+  netSalary  Float    @default(0)
+  status     String   @default("Pending") // Paid | Pending
+  paidAt     DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([employeeId, month])
+}
+
+// ---------------------------------------------------------------------------
+// Notifications & System
+
+model Notification {
+  id          String    @id @default(cuid())
+  channel     String // SMS | Email | WhatsApp
+  recipient   String
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  template    String?
+  subject     String?
+  body        String
+  status      String    @default("Sent") // Sent | Failed | Pending | Scheduled
+  error       String?
+  sentById    String?
+  sentBy      User?     @relation("MessageSender", fields: [sentById], references: [id], onDelete: SetNull)
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([channel])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model SmsCredit {
+  id        String   @id @default(cuid())
+  date      DateTime @default(now())
+  sent      Int      @default(0)
+  failed    Int      @default(0)
+  balance   Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  group     String   @default("General")
+  isSecret  Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+}
+
+model Backup {
+  id         String   @id @default(cuid())
+  fileName   String
+  size       Int
+  type       String   @default("Manual") // Manual | Auto
+  status     String   @default("Completed")
+  createdById String?
+  createdBy  User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model Counter {
+  id    String @id
+  value Int    @default(0)
+}
