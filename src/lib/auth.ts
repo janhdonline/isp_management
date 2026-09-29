@@ -1,15 +1,48 @@
 import "server-only";
 import { cookies, headers } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
+import { randomBytes } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { type PermissionKey } from "@/lib/permissions";
 
 const COOKIE = "isp_session";
 const MAX_AGE = 60 * 60 * 12; // 12h
 
+/**
+ * The key that signs session cookies.
+ *
+ * There is deliberately no hardcoded fallback. A secret written into the source
+ * is a secret in the repository: anyone who can read it can mint a cookie that
+ * passes verification and sign in as an administrator. A missing AUTH_SECRET is
+ * a deployment mistake, so it is reported loudly and, in production, refused
+ * outright rather than quietly downgraded to something guessable.
+ */
+let cachedKey: Uint8Array | null = null;
+
 function secretKey() {
-  const s = process.env.AUTH_SECRET ?? "";
-  return new TextEncoder().encode(s);
+  if (cachedKey) return cachedKey;
+
+  const configured = process.env.AUTH_SECRET?.trim();
+  if (!configured) {
+    const message =
+      "AUTH_SECRET is not set. Generate one with:\n" +
+      '  node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64url\'))"\n' +
+      "and put it in .env — anyone who knows this value can forge a session cookie.";
+
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(message);
+    }
+    console.warn(`[auth] ${message}\n[auth] Using a random per-process key; sessions end on restart.`);
+    cachedKey = new TextEncoder().encode(randomBytes(32).toString("base64url"));
+    return cachedKey;
+  }
+
+  if (configured.length < 32) {
+    throw new Error("AUTH_SECRET must be at least 32 characters long.");
+  }
+
+  cachedKey = new TextEncoder().encode(configured);
+  return cachedKey;
 }
 
 export type SessionUser = {
