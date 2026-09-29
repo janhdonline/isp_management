@@ -3,7 +3,7 @@
 A unified ISP operating system: customers, billing, accounts, network devices,
 support and reporting connected end to end — not a pile of separate CRUD pages.
 
-Built from [`ISP.md`](../ISP.md).
+Built from [`ISP.md`](./ISP.md) — the specification this implements.
 
 ---
 
