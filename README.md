@@ -62,6 +62,7 @@ npm run dev           # dev server
 npm run build         # production build
 npm run start         # serve the production build
 npm run lint          # eslint
+npm test              # unit tests (mock RouterOS, refunds, rate limit, PDF)
 npm run setup         # prisma migrate deploy + seed
 npm run prisma:seed   # reset + reseed demo data
 npm run db:reset      # drop and recreate the database
@@ -252,11 +253,26 @@ and writes files. With the secret in place it runs four jobs:
 | `invoices` | Raises the subscription invoice for every active customer on the configured cycle, skipping anyone already invoiced this month. |
 | `expiry` | Counts expiring and expired customers and, when auto-suspension is on, suspends those past the grace period. |
 | `messages` | Delivers queued messages whose scheduled time has arrived, claiming each row before sending so a retry cannot double-send. |
+| `network` | Pulls live sessions from every configured MikroTik and folds them into the online-user tables. |
 | `backup` | Takes one automatic snapshot a day, once the configured time has passed. |
 
 **Every job is idempotent.** Running it twice in a day bills nothing twice,
 suspends nothing twice, resends nothing and takes no second backup — the check
 is part of each job rather than a lock, so a retried request is safe.
+
+### Running it on a schedule
+
+`.github/workflows/scheduled-billing.yml` calls the endpoint once a day. Give it
+two repository secrets and nothing else:
+
+```bash
+gh secret set APP_URL     https://your-host.example.com
+gh secret set CRON_SECRET <the same value as in the app's .env>
+```
+
+Until both are set the job exits cleanly rather than calling a wrong address,
+and the Actions tab can trigger it by hand. Any other scheduler works just as
+well — the endpoint is the contract, not the workflow.
 
 ### Messaging
 

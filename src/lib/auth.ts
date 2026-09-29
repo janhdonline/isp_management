@@ -53,6 +53,12 @@ export type SessionUser = {
   roleId: string | null;
   permissions: string[];
   isAdmin: boolean;
+  /**
+   * Copied from the user row at sign-in. `getSession` compares it with the
+   * current value, so a password change or a revoke ends every cookie that was
+   * issued before it, without keeping a server-side session list.
+   */
+  tokenVersion: number;
 };
 
 export async function signToken(user: SessionUser) {
@@ -64,6 +70,7 @@ export async function signToken(user: SessionUser) {
     roleId: user.roleId,
     permissions: user.permissions,
     isAdmin: user.isAdmin,
+    tokenVersion: user.tokenVersion,
   })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
@@ -109,13 +116,37 @@ export async function clearSessionCookie() {
   store.delete(COOKIE);
 }
 
+/**
+ * Ends a session cookie early.
+ *
+ * A JWT is self-contained, so nothing about it can be edited to say "this has
+ * been revoked". Instead the user row carries a `tokenVersion` that is copied
+ * into the cookie at sign-in; bumping it makes every cookie issued before the
+ * bump fail this comparison. One extra query on each session read is the price
+ * of being able to actually turn someone off.
+ */
+async function isStillValid(user: SessionUser): Promise<boolean> {
+  // A cookie issued before this column existed carries no version. Treat it as
+  // valid so an upgrade does not sign everyone out at once.
+  if (user.tokenVersion === undefined) return true;
+
+  const row = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { tokenVersion: true, status: true },
+  });
+  if (!row) return false;
+  if (row.status !== "Active") return false;
+  return row.tokenVersion === user.tokenVersion;
+}
+
 export async function getSession(): Promise<SessionUser | null> {
   const store = await cookies();
   const token = store.get(COOKIE)?.value;
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secretKey());
-    return payload as unknown as SessionUser;
+    const user = payload as unknown as SessionUser;
+    return (await isStillValid(user)) ? user : null;
   } catch {
     return null;
   }
@@ -130,7 +161,8 @@ export async function getSessionFromRequest(
   const token = match.slice(COOKIE.length + 1);
   try {
     const { payload } = await jwtVerify(token, secretKey());
-    return payload as unknown as SessionUser;
+    const user = payload as unknown as SessionUser;
+    return (await isStillValid(user)) ? user : null;
   } catch {
     return null;
   }
@@ -180,17 +212,62 @@ export async function requirePermissionFromRequest(
   return s;
 }
 
-export async function loginWithPassword(email: string, password: string) {
+export type LoginFailure =
+  | { ok: false; reason: "locked"; retryAfterSec: number }
+  | { ok: false; reason: "invalid" }
+  | { ok: true; session: SessionUser };
+
+/**
+ * Signs a user in, counting failures against the account.
+ *
+ * The lockout is checked before the password is compared, so a locked account
+ * costs no bcrypt work — which is also what stops the endpoint being used to
+ * burn CPU. A successful sign-in clears the counter, so one mistyped password
+ * does not start a countdown that only an administrator can stop.
+ */
+export async function loginWithPassword(
+  email: string,
+  password: string,
+  clientIp = "unknown"
+): Promise<LoginFailure> {
+  const rateLimit = await import("@/lib/rate-limit");
+
+  const inMemory = rateLimit.checkMemoryRateLimit(email, clientIp);
+  if (!inMemory.allowed) {
+    return { ok: false, reason: "locked", retryAfterSec: inMemory.retryAfterSec ?? 60 };
+  }
+  const persisted = await rateLimit.checkDatabaseRateLimit(email);
+  if (!persisted.allowed) {
+    return { ok: false, reason: "locked", retryAfterSec: persisted.retryAfterSec ?? 60 };
+  }
+
   const user = await prisma.user.findUnique({
     where: { email },
     include: { role: { include: { permissions: { include: { permission: true } } } } },
   });
-  if (!user) return null;
-  if (user.status !== "Active") return null;
+  if (!user) {
+    // Count a miss for an unknown address too: otherwise the response time
+    // tells an attacker which addresses exist.
+    rateLimit.recordFailedAttempt(email, clientIp);
+    await rateLimit.recordDatabaseAttempt(email, clientIp);
+    return { ok: false, reason: "invalid" };
+  }
+  if (user.status !== "Active") {
+    rateLimit.recordFailedAttempt(email, clientIp);
+    await rateLimit.recordDatabaseAttempt(email, clientIp);
+    return { ok: false, reason: "invalid" };
+  }
 
   const bcrypt = await import("bcryptjs");
   const ok = await bcrypt.compare(password, user.passwordHash);
-  if (!ok) return null;
+  if (!ok) {
+    rateLimit.recordFailedAttempt(email, clientIp);
+    await rateLimit.recordDatabaseAttempt(email, clientIp);
+    return { ok: false, reason: "invalid" };
+  }
+
+  rateLimit.clearAttempts(email, clientIp);
+  await rateLimit.clearDatabaseAttempts(email);
 
   const permissions = user.role?.permissions.map((rp) => rp.permission.key) ?? [];
   const session: SessionUser = {
@@ -201,8 +278,9 @@ export async function loginWithPassword(email: string, password: string) {
     roleId: user.roleId,
     permissions,
     isAdmin: user.role?.name === "Administrator",
+    tokenVersion: user.tokenVersion,
   };
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
   await setSessionCookie(session);
-  return session;
+  return { ok: true, session };
 }

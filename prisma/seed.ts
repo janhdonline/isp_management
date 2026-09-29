@@ -786,10 +786,10 @@ async function seedActivity(userIds: { adminId: string; managerId: string }, cus
  * already used, otherwise the first real invoice/payment would collide.
  */
 async function alignCounters() {
-  const seq = async (key: string, table: string, column: string) => {
+  const seq = async (key: string, table: string, column: string, filter = "") => {
     // Take the digits at the end of the document number, e.g. "PAY-000123".
     const row = (await prisma.$queryRawUnsafe<{ v: bigint | number | null }[]>(
-      `SELECT MAX(NULLIF(SUBSTRING("${column}" FROM '[0-9]+$'), '')::bigint) AS v FROM "${table}"`
+      `SELECT MAX(NULLIF(SUBSTRING("${column}" FROM '[0-9]+$'), '')::bigint) AS v FROM "${table}" ${filter}`
     ))[0];
     const value = Number(row?.v ?? 0);
 
@@ -820,6 +820,8 @@ async function alignCounters() {
   await seq("receipt", "Receipt", "receiptNumber");
   await seq("ticket", "Ticket", "ticketNumber");
   await seq("transfer", "AccountTransfer", "reference");
+  // Refunds reuse the transaction reference column.
+  await seq("refund", "AccountTransaction", "reference", '"reference" LIKE \'RFD-%\'');
 }
 
 /**

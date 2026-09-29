@@ -3,6 +3,24 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+
+/**
+ * Saves a file without navigating away.
+ *
+ * A router push would try to render the endpoint as a page, and
+ * `window.location` would replace the current route on the way. Clicking a
+ * temporary anchor keeps the user where they are and lets the browser handle
+ * the download and its filename.
+ */
+function downloadFile(href: string, filename?: string) {
+  const a = document.createElement("a");
+  a.href = href;
+  if (filename) a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 import { DataTableShell, TableToolbar, Pagination, ExportCsvButton, FilterSelect, Column } from "@/components/ui/data-table";
 import { StatusBadge, Badge } from "@/components/ui/badge";
 import { DropdownMenu, MenuItem } from "@/components/ui/dropdown";
@@ -162,7 +180,7 @@ function InvoiceRowActions({ row }: { row: InvoiceRow }) {
   const items: (MenuItem | "separator")[] = [
     { label: "View", icon: <Eye />, onSelect: () => router.push(`/billing/invoices/${row.id}`) },
     { label: "Print", icon: <Printer />, onSelect: () => window.open(`/billing/invoices/${row.id}?print=1`, "_blank") },
-    { label: "Download PDF", icon: <FileDown />, onSelect: () => window.print() },
+    { label: "Download PDF", icon: <FileDown />, onSelect: () => downloadFile(`/api/pdf/invoice?id=${row.id}`) },
     { label: "Collect payment", icon: <Banknote />, onSelect: () => router.push(`/billing/invoices/${row.id}?tab=payment`), disabled: row.status === "Paid" },
     "separator",
     { label: "Cancel invoice", icon: <XCircle />, danger: true, onSelect: () => setConfirmCancel(true), disabled: row.status === "Paid" || row.status === "Cancelled" },
@@ -424,7 +442,7 @@ function ReceiptRowActions({ row }: { row: ReceiptRow }) {
       items={[
         { label: "View", icon: <Eye />, onSelect: () => window.open(`/billing/receipts/${row.id}`, "_blank") },
         { label: "Print", icon: <Printer />, onSelect: () => window.open(`/billing/receipts/${row.id}?print=1`, "_blank") },
-        { label: "Download PDF", icon: <FileDown />, onSelect: () => window.open(`/billing/receipts/${row.id}?print=1`, "_blank") },
+        { label: "Download PDF", icon: <FileDown />, onSelect: () => downloadFile(`/api/pdf/receipt?id=${row.id}`) },
         { label: "View customer", icon: <Eye />, onSelect: () => router.push(`/customers/${row.payment.customer.id}?tab=payments`) },
       ]}
       trigger={<MoreHorizontal className="size-4" />}

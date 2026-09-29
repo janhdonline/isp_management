@@ -447,6 +447,95 @@ export async function recordExpense(input: {
   });
 }
 
+/* ------------------------------------------------------------------ */
+/* Refund — returning money to a customer                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A refund is the exact opposite of a payment: money leaves the account the
+ * customer paid into, and the customer's outstanding due goes down.
+ *
+ * The three things that must move together — the account balance, the customer's
+ * due, and the ledger row — are written in one transaction, so a failure part
+ * way through cannot leave a customer marked as owed money that was actually
+ * returned.
+ */
+export async function issueRefund(input: {
+  customerId: string;
+  /** The account the money is returned from — usually the one they paid into. */
+  accountId: string;
+  amount: number;
+  reason: string;
+  /** Optional link to the payment being reversed. */
+  paymentId?: string | null;
+  date?: Date;
+  note?: string;
+  userId?: string;
+}) {
+  const amount = round2(input.amount);
+  if (amount <= 0) throw new Error("Refund amount must be greater than 0");
+  if (!input.reason.trim()) throw new Error("A reason is required for every refund");
+
+  return prisma.$transaction(async (tx) => {
+    const customer = await tx.customer.findUniqueOrThrow({ where: { id: input.customerId } });
+    const account = await tx.account.findUniqueOrThrow({ where: { id: input.accountId } });
+
+    if (account.currentBalance < amount) {
+      throw new Error(
+        `The ${account.name} account holds ${account.currentBalance}, which is not enough to refund ${amount}`
+      );
+    }
+    // A refund larger than what they owe would push the customer into credit.
+    // That is a real situation, but it is an adjustment, not a refund, so it
+    // is refused here rather than silently creating a negative due.
+    if (amount > customer.previousDue) {
+      throw new Error(
+        `Refund of ${amount} is more than the ${customer.previousDue} this customer owes. Use an adjustment for anything beyond the outstanding due.`
+      );
+    }
+
+    const reference = await nextNumber(tx, "refund", "RFD-");
+
+    // 1. Money leaves the account the customer paid into.
+    await postToAccount(tx, {
+      accountId: account.id,
+      type: "Refund",
+      direction: "Debit",
+      amount,
+      description: `Refund to ${customer.name} (${customer.username}) — ${input.reason}`,
+      reference,
+      paymentId: input.paymentId || undefined,
+      userId: input.userId,
+      date: input.date ?? new Date(),
+    });
+
+    // 2. The customer's outstanding due drops.
+    const newDue = round2(customer.previousDue - amount);
+    const newBillingStatus = newDue <= 0 ? "Paid" : newDue < customer.monthlyBill ? "Partial" : "Unpaid";
+    await tx.customer.update({
+      where: { id: customer.id },
+      data: { previousDue: newDue, billingStatus: newBillingStatus },
+    });
+
+    await prismaLog(
+      tx,
+      {
+        action: "Refund",
+        entity: "Payment",
+        entityId: input.paymentId ?? undefined,
+        summary: `Refunded ${amount} to ${customer.name} (${reference}) — ${input.reason}`,
+      },
+      input.userId
+    );
+
+    return { reference, amount, newDue };
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Transfer between accounts                                           */
+/* ------------------------------------------------------------------ */
+
 export async function transferFunds(input: {
   fromAccountId: string;
   toAccountId: string;

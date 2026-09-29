@@ -1,0 +1,93 @@
+name: Scheduled billing
+
+# Calls the deployed app's /api/cron endpoint, which raises the monthly
+# invoice, runs the expiry sweep, delivers queued messages and takes the daily
+# backup. The endpoint is idempotent, so a retry or a missed window is safe.
+#
+# The URL and the secret are repository secrets, not workflow variables, so they
+# stay out of the repository:
+#
+#   gh secret set APP_URL        https://your-host.example.com
+#   gh secret set CRON_SECRET    <the same value as in the app's .env>
+#
+# Nothing runs until both are set: with APP_URL missing the job exits cleanly
+# rather than calling a wrong address.
+
+on:
+  schedule:
+    # 02:07 UTC every day. Off the hour on purpose — the top of the hour is the
+    # busiest minute on GitHub's scheduler, and a run that is delayed by a
+    # minute or two is not a problem for a job like this.
+    - cron: "7 2 * * *"
+  workflow_dispatch:
+    # Lets you run it by hand from the Actions tab, with an optional reason.
+    inputs:
+      reason:
+        description: "Why are you running this now?"
+        required: false
+
+concurrency:
+  # One run at a time. A second firing while the first is in flight would be
+  # harmless — the endpoint is idempotent — but it wastes the minute of runtime.
+  group: isp-scheduled-billing
+  cancel-in-progress: false
+
+jobs:
+  run-cron:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check configuration
+        id: config
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "APP_URL or CRON_SECRET is not set on this repository."
+            echo "Set them under Settings → Secrets and variables → Actions."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Call the cron endpoint
+        if: steps.config.outputs.configured == 'true'
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          REASON: ${{ github.event.inputs.reason }}
+        run: |
+          set -euo pipefail
+          # Strip any trailing slash so the path never doubles up.
+          base="${APP_URL%/}"
+          echo "POST ${base}/api/cron"
+
+          body=$(curl --silent --show-error --fail-with-body \
+            --max-time 480 \
+            -X POST "${base}/api/cron" \
+            -H "authorization: Bearer ${CRON_SECRET}" \
+            -H "content-type: application/json" \
+            -d "{\"reason\": \"${REASON:-scheduled}\"}")
+
+          echo "$body"
+          echo "$body" > cron-result.json
+
+      - name: Report what the run did
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          if [ ! -f cron-result.json ]; then
+            echo "::error::The cron endpoint did not return a result."
+            exit 1
+          fi
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("cron-result.json", "utf8"));
+            if (!r.ok) { console.error("::error::The run reported failure:", r); process.exit(1); }
+            const lines = [];
+            for (const [job, out] of Object.entries(r.results ?? {})) {
+              if (out.error) { lines.push(`::error::${job} failed: ${out.error}`); continue; }
+              lines.push(`- **${job}**: ran ${out.ran}` + (out.skipped ? `, ${out.skipped}` : ""));
+            }
+            console.log(lines.join("\n"));
+          ' >> "$GITHUB_STEP_SUMMARY"

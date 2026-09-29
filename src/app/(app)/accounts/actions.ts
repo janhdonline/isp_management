@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requirePermission } from "@/lib/auth";
 import { logActivity } from "@/lib/services/activity";
-import { transferFunds, recordExpense } from "@/lib/services/billing-queries";
+import { transferFunds, recordExpense, issueRefund } from "@/lib/services/billing-queries";
 import { round2 } from "@/lib/utils";
 import { EXPENSE_CATEGORIES } from "@/lib/enums";
 
@@ -47,6 +47,54 @@ export async function transferFundsAction(
     return { success: `Transferred ${round2(transfer.amount)} (ref ${transfer.reference}).` };
   } catch (e) {
     return { formError: e instanceof Error ? e.message : "Transfer failed" };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Refund                                                              */
+/* ------------------------------------------------------------------ */
+
+const refundSchema = z.object({
+  customerId: z.string().min(1, "Select a customer"),
+  accountId: z.string().min(1, "Select the account to refund from"),
+  amount: z.coerce.number().gt(0, "Enter an amount greater than zero"),
+  reason: z.string().trim().min(3, "Give a reason for the refund"),
+  paymentId: z.string().trim().optional(),
+  date: z.coerce.date().optional(),
+  note: z.string().trim().optional(),
+});
+
+export async function issueRefundAction(
+  _prev: AcctFormState,
+  formData: FormData
+): Promise<AcctFormState> {
+  // Refunds move money out of an account, so they are gated behind Approve
+  // rather than Create — same reasoning as a restore.
+  const session = await requirePermission("accounts.approve");
+  const parsed = refundSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    const errors: Record<string, string[]> = {};
+    for (const i of parsed.error.issues) {
+      const k = i.path.join(".") || "_form";
+      (errors[k] ??= []).push(i.message);
+    }
+    return { errors, formError: "Please fix the highlighted fields." };
+  }
+
+  try {
+    const result = await issueRefund({
+      ...parsed.data,
+      paymentId: parsed.data.paymentId || null,
+      userId: session.id,
+    });
+    revalidatePath("/accounts");
+    revalidatePath("/accounts/history");
+    revalidatePath("/customers");
+    return {
+      success: `Refunded ${round2(result.amount)} (ref ${result.reference}). The customer now owes ${round2(result.newDue)}.`,
+    };
+  } catch (e) {
+    return { formError: e instanceof Error ? e.message : "Refund failed" };
   }
 }
 

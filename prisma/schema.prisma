@@ -29,6 +29,10 @@ model User {
   roleId       String?
   role         Role?    @relation(fields: [roleId], references: [id], onDelete: SetNull)
   lastLoginAt  DateTime?
+  /// Bumped on a password change or session revoke. The session cookie carries
+  /// this value, so a cookie signed before the bump stops verifying — which is
+  /// how a stateless JWT session is ended early.
+  tokenVersion Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -697,4 +701,13 @@ model Backup {
 model Counter {
   id    String @id
   value Int    @default(0)
+}
+
+/// Failed sign-in attempts, so a lockout survives a restart and is shared
+/// across every instance behind a load balancer.
+model LoginAttempt {
+  email   String   @id
+  count   Int      @default(0)
+  firstAt DateTime @default(now())
+  ip      String?
 }

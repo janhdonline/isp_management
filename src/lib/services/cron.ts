@@ -259,7 +259,29 @@ export async function sendScheduledMessages(): Promise<JobResult> {
 }
 
 /* ------------------------------------------------------------------ */
-/* 4. Backup schedule (Settings → Backup)                              */
+/* 4. Network sync                                                    */
+/* ------------------------------------------------------------------ */
+
+export async function syncNetwork(): Promise<JobResult> {
+  const { syncRouters } = await import("@/lib/services/network-sync");
+  const result = await syncRouters();
+
+  // Every unreachable router is worth saying out loud: the dashboard keeps
+  // showing the last known state, and an operator should know it is stale.
+  const down = result.routers.filter((r) => !r.ok);
+  return {
+    ran: result.markedOnline,
+    skipped:
+      `${result.markedOffline} went offline` +
+      (result.unmatched ? `, ${result.unmatched} session(s) had no matching customer` : "") +
+      (down.length
+        ? ` — ${down.length} router(s) unreachable: ${down.map((r) => r.name).join(", ")}`
+        : ""),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 5. Backup schedule (Settings → Backup)                              */
 /* ------------------------------------------------------------------ */
 
 export async function runScheduledBackup(): Promise<JobResult> {
@@ -313,6 +335,7 @@ export async function runAllJobs() {
     invoices: generateMonthlyInvoices,
     expiry: sweepExpiry,
     messages: sendScheduledMessages,
+    network: syncNetwork,
     backup: runScheduledBackup,
   })) {
     try {

@@ -28,10 +28,19 @@ export async function POST(request: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // A scheduler can say why it fired — useful when reading the run history.
+  const reason = await request
+    .json()
+    .then((b: { reason?: unknown }) =>
+      typeof b?.reason === "string" ? b.reason.slice(0, 120) : "unspecified",
+    )
+    .catch(() => "unspecified");
+
   const { ms, results } = await runAllJobs();
+  const finishedAt = new Date();
 
   return Response.json(
-    { ok: true, ms, results },
+    { ok: true, ms, reason, finishedAt: finishedAt.toISOString(), results },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
@@ -40,7 +49,7 @@ export async function POST(request: Request) {
 export async function GET() {
   return Response.json({
     enabled: Boolean(process.env.CRON_SECRET),
-    jobs: ["invoices", "expiry", "messages", "backup"],
+    jobs: ["invoices", "expiry", "messages", "network", "backup"],
     method: "POST with an authorization: Bearer $CRON_SECRET header",
   });
 }
