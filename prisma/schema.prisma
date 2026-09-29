@@ -250,6 +250,7 @@ model Customer {
   expenses     Expense[]
   mandates     PaymentMandate[]
   autoCollections AutoCollectionRun[]
+  networkActions NetworkAction[]
 
   @@index([areaId])
   @@index([packageId])
@@ -819,6 +820,41 @@ model AutoCollectionRun {
 
   @@index([status])
   @@index([createdAt])
+}
+
+/// A command to a router that has not been carried out yet.
+///
+/// Billing enforcement has to reach the network, and routers fail. Without a
+/// queue, "the customer is Suspended in our database but still browsing" is a
+/// permanent state, because nobody notices the router call failed. Every
+/// enforcement attempt therefore writes a row first, and the router call is the
+/// thing that is retried — so the state that is true in the database is always
+/// eventually true on the network.
+model NetworkAction {
+  id         String    @id @default(cuid())
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  routerId   String?
+  /// The username on the router, kept even if the customer row is gone, so a
+  /// pending un-suspend can still be carried out.
+  username   String
+  /// suspend | reconnect | provision | setProfile | removeQueue
+  action     String
+  /// Pending | Done | Failed
+  status     String    @default("Pending")
+  attempts   Int       @default(0)
+  lastError  String?
+  /// Extra detail: the package profile, the queue limits, whatever the
+  /// particular action needed.
+  payload    String?
+  /// Set when the action is done, so a re-run of the same logical action can be
+  /// recognised rather than repeated.
+  completedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@index([customerId])
 }
 
 /// Failed sign-in attempts, so a lockout survives a restart and is shared

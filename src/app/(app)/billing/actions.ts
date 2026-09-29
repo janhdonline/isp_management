@@ -12,6 +12,7 @@ import {
   type FieldErrors,
 } from "@/lib/validators";
 import { createInvoice, recordPayment, generateRenewalInvoice } from "@/lib/services/billing";
+import { maybeAutoReconnect } from "@/lib/services/network-enforcement";
 import { cancelInvoice } from "@/lib/services/billing-queries";
 import { prismaLog } from "@/lib/services/activity";
 import { round2 } from "@/lib/utils";
@@ -186,14 +187,21 @@ export async function collectPaymentAction(
       return { payment, receipt };
     });
 
+    // A payment that clears the last of what a suspended customer owed brings
+    // their line back without anyone touching the router.
+    const restored = await maybeAutoReconnect(result.payment.customerId, session.id);
+
     revalidatePath("/billing/payments");
     revalidatePath("/billing/invoices");
     revalidatePath("/billing/receipts");
     revalidatePath("/customers");
     revalidatePath("/dashboard");
+    revalidatePath("/network");
 
     return {
-      success: `Payment ${result.payment.paymentId} recorded. Receipt ${result.receipt.receiptNumber}.`,
+      success:
+        `Payment ${result.payment.paymentId} recorded. Receipt ${result.receipt.receiptNumber}.` +
+        (restored?.ok ? " The line has been reconnected automatically." : ""),
       paymentId: result.payment.paymentId,
       receiptNumber: result.receipt.receiptNumber,
       id: result.payment.id,
@@ -248,12 +256,20 @@ export async function receivePaymentAction(
       return { payment, receipt };
     });
 
+    // Money has moved and the invoice is settled. If that was the last thing
+    // keeping this customer suspended, the line comes back up on its own —
+    // otherwise someone has to go to the router, and in practice nobody does,
+    // which is how a paying customer stays cut off for a week.
+    const restored = await maybeAutoReconnect(result.payment.customerId, session.id);
+
     revalidatePath("/billing/invoices");
     revalidatePath(`/billing/invoices/${d.invoiceId}`);
     revalidatePath("/billing/payments");
     revalidatePath(`/customers/${result.payment.customerId}`);
     return {
-      success: `Payment ${result.payment.paymentId} recorded. Receipt ${result.receipt.receiptNumber}.`,
+      success:
+        `Payment ${result.payment.paymentId} recorded. Receipt ${result.receipt.receiptNumber}.` +
+        (restored?.ok ? " The line has been reconnected automatically." : ""),
       receiptNumber: result.receipt.receiptNumber,
     };
   } catch (e) {

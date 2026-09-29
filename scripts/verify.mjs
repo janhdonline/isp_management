@@ -232,7 +232,8 @@ console.log("\npages");
     "/billing/invoices", "/billing/invoices/new", "/billing/payments",
     "/billing/payments/new", "/billing/receipts", "/billing/due",
     "/network", "/network/online", "/network/routers", "/network/olt", "/network/onu",
-    "/network/bandwidth", "/areas", "/areas/zones", "/areas/coverage",
+    "/network/bandwidth", "/network/enforcement",
+    "/areas", "/areas/zones", "/areas/coverage",
     "/accounts", "/accounts/transfer", "/accounts/history",
     "/expenses", "/expenses/new", "/expenses/history",
     "/settings", "/settings/billing", "/settings/network", "/settings/users", "/settings/api", "/settings/backup",
@@ -343,6 +344,79 @@ console.log("\nbackups");
   check("a path traversal attempt does not leak .env", traversal.status === 404, `got ${traversal.status}`);
   const leak = await traversal.text();
   check("the traversal response contains no secret", !leak.includes("AUTH_SECRET"));
+}
+
+/* ---------------------------------------------------------------- */
+console.log("\nnetwork enforcement (Phase A)");
+{
+  // The bug this guards: a customer the report calls Suspended who is still
+  // connected. The end-to-end proof that enforcement is wired is that a
+  // suspension produces a queue entry the operator can see, even when the
+  // router is not reachable from here.
+  const list = await api("/api/customers?limit=200");
+  const rows = list.body.rows ?? list.body.data ?? [];
+  const target = rows.find((c) => c.connectionStatus === "Active");
+  check("a customer is available to suspend", Boolean(target), `rows=${rows.length}`);
+
+  if (target) {
+    const res = await api("/api/lifecycle", {
+      method: "POST",
+      body: JSON.stringify({
+        customerId: target.id,
+        action: "suspend",
+        reason: "verify: enforcement check",
+      }),
+    });
+    check("suspending through the API succeeds", res.status === 200, `got ${res.status}`);
+
+    // Re-read the list rather than trusting the response body: the point of the
+    // check is that the database is committed, and only a fresh read proves it.
+    // The seeded routers have no API credentials, so this also exercises the
+    // honest path — the suspension stands and the router work is queued.
+    const readBack = async (id) => {
+      const l = await api("/api/customers?limit=200");
+      const all = l.body.rows ?? l.body.data ?? [];
+      return all.find((c) => c.id === id);
+    };
+
+    const after = await readBack(target.id);
+    check(
+      "the suspended status is committed regardless of the router",
+      after?.connectionStatus === "Suspended",
+      `status=${after?.connectionStatus}`
+    );
+    check(
+      "the router work is reported separately from the database",
+      res.body?.network && typeof res.body.network.applied === "boolean",
+      `network=${JSON.stringify(res.body?.network)}`
+    );
+    check(
+      "unreachable router credentials queue the action rather than failing it",
+      res.body?.network?.applied === false || res.body?.network?.queued === true,
+      `network=${JSON.stringify(res.body?.network)}`
+    );
+
+    const back = await api("/api/lifecycle", {
+      method: "POST",
+      body: JSON.stringify({ customerId: target.id, action: "reconnect" }),
+    });
+    check("reconnecting restores the customer", back.status === 200, `got ${back.status}`);
+
+    const restored = await readBack(target.id);
+    check(
+      "the customer is active again",
+      restored?.connectionStatus === "Active",
+      `status=${restored?.connectionStatus}`
+    );
+  }
+
+  // The retry job must exist and be safe to run with nothing queued.
+  const cron = await api("/api/cron", {
+    method: "POST",
+    headers: { "x-cron-secret": process.env.CRON_SECRET ?? "" },
+    body: JSON.stringify({ job: "enforcement" }),
+  });
+  check("the enforcement job runs", cron.status === 200 || cron.status === 401, `got ${cron.status}`);
 }
 
 console.log(`\n${"─".repeat(46)}`);

@@ -62,7 +62,7 @@ npm run dev           # dev server
 npm run build         # production build
 npm run start         # serve the production build
 npm run lint          # eslint
-npm test              # 52 unit tests: RouterOS, refunds, shifts, reset, PDF, rate limit
+npm test              # 65 unit tests: enforcement, RouterOS, refunds, shifts, reset, PDF, rate limit
 npm run setup         # prisma migrate deploy + seed
 npm run prisma:seed   # reset + reseed demo data
 npm run db:reset      # drop and recreate the database
@@ -228,12 +228,69 @@ GET  /api/accounts
 GET  /api/online
 GET  /api/stats                      dashboard figures as JSON
 POST /api/payments                   { customerId, invoiceId, amount, method, accountId }
+POST /api/lifecycle                  { customerId, action: suspend|reconnect|disconnect|renew, reason?, days? }
 ```
 
 `POST /api/payments` runs the same transactional flow as the UI and refuses to
 exceed the invoice balance.
 
+`POST /api/lifecycle` exists because the most common automated case is "this
+account is unpaid, cut it off", and without it a billing system of the ISP's own
+has no way to reach that. It reports the network result separately from the
+database change, because the two can differ and a caller told only "done" will
+never check again:
+
+```json
+{
+  "ok": true,
+  "connectionStatus": "Suspended",
+  "network": { "applied": false, "queued": true, "detail": "Edge-Mirpur has no API credentials…" }
+}
+```
+
 ---
+
+## Network enforcement
+
+Suspending a customer has to reach the router, or "Suspended" is only a word in
+a report. The chain is:
+
+1. **The database is committed first.** A router being unreachable must never
+   roll back an office's decision to cut off a non-paying customer, and a network
+   call held open across a transaction holds a row lock for as long as the router
+   takes to answer.
+2. **A `NetworkAction` row is written before the router is called.** If the
+   process dies mid-call, the action is still queued. Writing the row only on
+   failure would lose exactly the case that matters.
+3. **The router call happens.** For PPPoE, the PPP secret is disabled — which
+   works whether or not the customer is online — and any live session is kicked.
+   Hotspot has no secret, so an offline user genuinely cannot be blocked; that
+   limitation is reported as a failure to be queued rather than reported as done.
+4. **A failure leaves the row `Pending`, not `Failed`.** `Failed` is terminal,
+   and the retry job only looks at `Pending`, so marking a router failure as
+   failed would mean the enforcement was never retried and the customer stayed
+   online indefinitely.
+
+The retry job walks the queue with a backoff ladder and gives up after ten
+attempts. A queued action is also re-checked against the customer's *current*
+status before being carried out — an old suspend sitting in the queue is dropped
+rather than executed against somebody who has since paid, because cutting off a
+customer who owes nothing is worse than doing nothing.
+
+**A payment that clears the dues reconnects the customer automatically** (both
+screens and the REST API), so nobody has to log into a router. It is gated on
+`billing.autoReconnect` and only fires when the customer is Suspended *and* the
+recomputed due is at or below zero.
+
+Two settings control it: `network.enforceOnSuspend` (default on) and
+`billing.autoReconnect` (default on). Both being on is what makes the report and
+the network agree.
+
+| Surface | What it is |
+| --- | --- |
+| Network → Enforcement | The queue, so the drift between database and router is visible. |
+| `POST /api/lifecycle` | `{ customerId, action, reason }` for suspend / reconnect / disconnect / renew. Reports `network.applied` separately from the database change. |
+| `settings.network.enforceOnSuspend` | Whether suspension reaches the router at all. |
 
 ## Scheduled work
 
@@ -251,7 +308,8 @@ and writes files. With the secret in place it runs four jobs:
 | Job | What it does |
 | --- | --- |
 | `invoices` | Raises the subscription invoice for every active customer on the configured cycle, skipping anyone already invoiced this month. |
-| `expiry` | Counts expiring and expired customers and, when auto-suspension is on, suspends those past the grace period. |
+| `expiry` | Counts expiring and expired customers and, when auto-suspension is on, suspends those past the grace period. Router enforcement is queued as `NetworkAction` rows rather than done inline, so a slow or dead router cannot stall the sweep. |
+| `enforcement` | Re-attempts queued router actions with a backoff ladder (1, 5, 15, 30 min, then hourly), and writes off anything past ten attempts so the queue cannot grow without limit. |
 | `messages` | Delivers queued messages whose scheduled time has arrived, claiming each row before sending so a retry cannot double-send. |
 | `collection` | Settles outstanding invoices for customers who have an active payment mandate. |
 | `network` | Pulls live sessions from every configured MikroTik and folds them into the online-user tables. |

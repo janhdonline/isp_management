@@ -46,8 +46,34 @@ const PPP_ACTIVE = [
   },
 ];
 
+/** Hotspot sessions, with hotspot's own field names. Empty for the offline case. */
+let HOTSPOT_ACTIVE = [
+  {
+    ".id": "*H1",
+    user: "hotspotuser",
+    address: "10.5.0.2",
+    "mac-address": "64:4C:36:12:AB:03",
+    server: "hotspot1",
+    uptime: "5m",
+    "bytes-in": "1048576",
+    "bytes-out": "262144",
+  },
+];
+
 let addressList = [
   { ".id": "*1", list: "isp-blocked", address: "100.64.10.99" },
+];
+
+/**
+ * PPP secrets, the mechanism suspension actually works through. The two live
+ * sessions above have matching secrets; the third exists with no session, which
+ * is the case that matters — a customer suspended while they are offline still
+ * has to be locked out of the next login.
+ */
+let secrets = [
+  { ".id": "*S1", name: "rahim100", password: "rahim100", profile: "10Mbps", disabled: "no", service: "isp-pppoe" },
+  { ".id": "*S2", name: "karim200", password: "karim200", profile: "25Mbps", disabled: "no", service: "isp-pppoe" },
+  { ".id": "*S3", name: "offline300", password: "offline300", profile: "10Mbps", disabled: "no", service: "isp-pppoe" },
 ];
 
 /** Everything the mock was asked to do, so a test can assert on it. */
@@ -93,9 +119,46 @@ export function startMockRouter({
       if (path === "/ppp/active" && req.method === "GET") {
         return json(res, 200, PPP_ACTIVE);
       }
+      if (path === "/ip/hotspot/active" && req.method === "GET") {
+        return json(res, 200, HOTSPOT_ACTIVE);
+      }
+      if (path.startsWith("/ip/hotspot/active/") && req.method === "DELETE") {
+        return json(res, 200, {});
+      }
 
       if (path.startsWith("/ppp/active/") && req.method === "DELETE") {
         return json(res, 200, {});
+      }
+
+      // /ppp/secret — the enforcement endpoint. RouterOS is a plain REST
+      // collection here, so a lookup by name is a client-side find, exactly as
+      // the real client has to do it.
+      if (path === "/ppp/secret") {
+        if (req.method === "GET") return json(res, 200, secrets);
+        if (req.method === "PUT") {
+          const parsed = JSON.parse(body || "{}");
+          const id = `*S${secrets.length + 1}`;
+          const row = { ".id": id, ...parsed };
+          secrets.push(row);
+          return json(res, 200, row);
+        }
+      }
+
+      if (path.startsWith("/ppp/secret/")) {
+        const id = decodeURIComponent(path.split("/").pop());
+        const idx = secrets.findIndex((r) => r[".id"] === id);
+        if (idx === -1) {
+          return json(res, 404, { error: 404, message: "no such item" });
+        }
+        if (req.method === "PATCH") {
+          const parsed = JSON.parse(body || "{}");
+          secrets[idx] = { ...secrets[idx], ...parsed };
+          return json(res, 200, secrets[idx]);
+        }
+        if (req.method === "DELETE") {
+          secrets = secrets.filter((r) => r[".id"] !== id);
+          return json(res, 200, {});
+        }
       }
 
       if (path === "/ip/firewall/address-list") {
@@ -129,10 +192,34 @@ export function startMockRouter({
         user,
         password,
         addressList: () => addressList,
+        secrets: () => secrets.slice(),
+        hotspot: () => HOTSPOT_ACTIVE.slice(),
+        setHotspot: (rows) => {
+          HOTSPOT_ACTIVE = rows;
+        },
+        /** What happened to one subscriber, so a test can assert on the end state. */
+        secret: (name) => secrets.find((r) => r.name === name) ?? null,
         calls: () => calls.slice(),
         reset: () => {
           calls.length = 0;
           addressList = [{ ".id": "*1", list: "isp-blocked", address: "100.64.10.99" }];
+          HOTSPOT_ACTIVE = [
+            {
+              ".id": "*H1",
+              user: "hotspotuser",
+              address: "10.5.0.2",
+              "mac-address": "64:4C:36:12:AB:03",
+              server: "hotspot1",
+              uptime: "5m",
+              "bytes-in": "1048576",
+              "bytes-out": "262144",
+            },
+          ];
+          secrets = [
+            { ".id": "*S1", name: "rahim100", password: "rahim100", profile: "10Mbps", disabled: "no", service: "isp-pppoe" },
+            { ".id": "*S2", name: "karim200", password: "karim200", profile: "25Mbps", disabled: "no", service: "isp-pppoe" },
+            { ".id": "*S3", name: "offline300", password: "offline300", profile: "10Mbps", disabled: "no", service: "isp-pppoe" },
+          ];
         },
         close: () => new Promise((r) => server.close(r)),
       });

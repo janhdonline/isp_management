@@ -70,6 +70,7 @@ export const DEFAULT_SETTINGS: {
   { key: "billing.lateFee", value: "0", group: "Billing" },
   { key: "billing.autoInvoice", value: "true", group: "Billing" },
   { key: "billing.autoSuspend", value: "true", group: "Billing" },
+  { key: "billing.autoReconnect", value: "true", group: "Billing" },
   { key: "billing.autoCollect", value: "false", group: "Billing" },
   { key: "billing.gatewayUrl", value: "", group: "Billing" },
   { key: "billing.gatewayKey", value: "", group: "Billing", isSecret: true },
@@ -85,6 +86,7 @@ export const DEFAULT_SETTINGS: {
   { key: "billing.expiringDays", value: "3", group: "Billing" },
 
   // Network
+  { key: "network.enforceOnSuspend", value: "true", group: "Network" },
   { key: "network.radiusServer", value: "10.10.0.1", group: "Network" },
   { key: "network.radiusPort", value: "1812", group: "Network" },
   { key: "network.radiusSecret", value: "", group: "Network", isSecret: true },

@@ -7,7 +7,7 @@
  * vendor only means implementing one function.
  */
 
-import { RouterOsClient, RouterOsError } from "./routeros";
+import { RouterOsClient, RouterOsError, type SessionSource } from "./routeros";
 
 export type DeviceHealth = {
   status: "Online" | "Offline" | "Unknown";
@@ -44,6 +44,18 @@ export interface NetworkAdapter {
    */
   activeUsers(): Promise<OnlineUser[]>;
   disconnect(username: string): Promise<boolean>;
+  /**
+   * "May this user get online at all", which is a different question from
+   * `block()`.
+   *
+   * `block()` needs a live IP, so it only works for someone currently
+   * connected — useless as a suspension mechanism, because most suspensions
+   * happen when the customer is not online. `setAccess` works either way: the
+   * router refuses the next login and the live session is dropped in the same
+   * call, so a suspended customer is actually disconnected rather than merely
+   * scheduled to be.
+   */
+  setAccess(username: string, enabled: boolean): Promise<boolean>;
   block(username: string, blocked: boolean): Promise<boolean>;
 }
 
@@ -83,6 +95,15 @@ export class DatabaseNetworkAdapter implements NetworkAdapter {
     return true;
   }
 
+  /**
+   * Nothing to do, and it says so rather than pretending. `live` is false, so
+   * callers label this as simulated — an operator looking at a customer
+   * profile needs to know nobody was actually disconnected.
+   */
+  async setAccess(): Promise<boolean> {
+    return true;
+  }
+
   async block(): Promise<boolean> {
     return true;
   }
@@ -94,10 +115,25 @@ export class DatabaseNetworkAdapter implements NetworkAdapter {
  */
 export class MikrotikAdapter implements NetworkAdapter {
   readonly name = "MikroTik RouterOS";
-  readonly capabilities = "Active users, traffic, disconnect, block";
+  readonly capabilities = "Active users, traffic, suspend/reconnect (PPP secret), block";
   readonly live = true;
 
-  constructor(private client: RouterOsClient) {}
+  /**
+   * Addresses seen on the last read, kept so a reconnect can clear a stale
+   * firewall block. The router is the only place an address is known, and the
+   * address is gone once the session drops — so this is a short-lived cache, not
+   * a record.
+   */
+  private knownIps = new Map<string, string>();
+
+  private sessionSource: SessionSource;
+
+  constructor(
+    private client: RouterOsClient,
+    sessionSource: SessionSource = "ppp"
+  ) {
+    this.sessionSource = sessionSource;
+  }
 
   async health(): Promise<DeviceHealth> {
     const now = new Date();
@@ -140,6 +176,10 @@ export class MikrotikAdapter implements NetworkAdapter {
 
   async activeUsers(): Promise<OnlineUser[]> {
     const sessions = await this.client.listSessions();
+    // Remember the addresses so a later reconnect can clear a firewall block.
+    for (const s of sessions) {
+      if (s.ipAddress) this.knownIps.set(s.username, s.ipAddress);
+    }
     return sessions.map((u) => ({
       username: u.username,
       ipAddress: u.ipAddress,
@@ -153,6 +193,82 @@ export class MikrotikAdapter implements NetworkAdapter {
 
   async disconnect(username: string): Promise<boolean> {
     return this.client.removeSession(username);
+  }
+
+  /**
+   * Suspend or restore a subscriber's access.
+   *
+   * Two mechanisms, chosen by what the router actually terminates:
+   *
+   *  - **PPPoE** — the PPP secret is the enforcement point. Disabling it stops
+   *    the next login, and the live session is kicked so the current one dies
+   *    too. This works whether or not the customer is online, which is the
+   *    whole point.
+   *  - **Hotspot** — there is no secret to disable, so the firewall address
+   *    list is used. That needs a live IP, so an offline user is left with a
+   *    hotspot login that would succeed; the limitation is real and is
+   *    reported rather than hidden behind a "done".
+   *
+   * A 404 from the kick means the user was not connected, which is exactly what
+   * a suspend of an offline customer should look like — not a failure.
+   */
+  async setAccess(username: string, enabled: boolean): Promise<boolean> {
+    if (this.sessionSource === "hotspot") {
+      return this.setHotspotAccess(username, enabled);
+    }
+
+    // The secret first: if the router is unreachable or the secret is missing,
+    // that is the failure worth reporting, and it is better to learn about it
+    // before pretending to have disconnected someone.
+    await this.client.setSecretDisabled(username, !enabled);
+
+    if (enabled) {
+      // Re-enabling also clears any firewall block left over from a previous
+      // hotspot-era block, so a customer does not pay and stay cut off.
+      await this.client.setBlocked(this.lastKnownIp(username) ?? "", false).catch(() => undefined);
+      return true;
+    }
+
+    try {
+      await this.client.removeSession(username);
+    } catch (e) {
+      const notConnected =
+        e instanceof RouterOsError && (e.status === 404 || /not connected/i.test(e.message));
+      if (!notConnected) throw e;
+      // Already offline. The secret is disabled, which is the part that matters.
+    }
+    return true;
+  }
+
+  /**
+   * Hotspot has no secret, so access is controlled by IP. A subscriber who is
+   * not online has no IP, and this throws rather than quietly doing nothing —
+   * the caller can then queue the action for a later attempt.
+   */
+  private async setHotspotAccess(username: string, enabled: boolean): Promise<boolean> {
+    const sessions = await this.client.listSessions();
+    const target = sessions.find((u) => u.username === username);
+    if (!target?.ipAddress) {
+      throw new RouterOsError(
+        `${username} is not connected, so a hotspot user has no address to ${enabled ? "unblock" : "block"}.`,
+        404,
+        "Hotspot access is controlled by IP address, which only exists while the user is online. Consider PPPoE for enforceable suspension."
+      );
+    }
+    await this.client.setBlocked(target.ipAddress, !enabled);
+    if (!enabled) {
+      try {
+        await this.client.removeSession(username);
+      } catch {
+        // The block is in place; the kick is best effort.
+      }
+    }
+    return true;
+  }
+
+  /** The IP a user last had, if we happen to know it from a live session. */
+  private lastKnownIp(username: string): string | null {
+    return this.knownIps.get(username) ?? null;
   }
 
   async block(username: string, blocked: boolean): Promise<boolean> {
@@ -200,7 +316,8 @@ export function adapterForRouter(row: RouterCredentials): NetworkAdapter {
       password: row.apiSecret,
       useSsl: row.useSsl,
       sessionSource: row.sessionSource === "hotspot" ? "hotspot" : "ppp",
-    })
+    }),
+    row.sessionSource === "hotspot" ? "hotspot" : "ppp"
   );
 }
 

@@ -263,6 +263,144 @@ export class RouterOsClient {
   }
 
   /**
+   * Finds a PPP secret by name.
+   *
+   * The RouterOS REST API has no "get by name" — it is a plain collection, so
+   * the row has to be found client-side. Returning `null` rather than an empty
+   * array is deliberate: the caller has to be able to tell "this subscriber has
+   * no secret on this router" from "the list is empty", because the first one
+   * means nobody is going to get the invoice they paid for.
+   */
+  async findSecret(name: string): Promise<{
+    id: string;
+    name: string;
+    disabled: boolean;
+    profile?: string;
+  } | null> {
+    const rows = await this.call<Record<string, string>[]>("/ppp/secret");
+    if (!Array.isArray(rows)) return null;
+    const row = rows.find((r) => r.name === name);
+    if (!row?.[".id"]) return null;
+    return {
+      id: row[".id"],
+      name: row.name ?? name,
+      // RouterOS writes booleans as "true"/"false" and sometimes "yes"/"no"
+      // depending on the version, so both are read.
+      disabled: row.disabled === "true" || row.disabled === "yes",
+      profile: row.profile,
+    };
+  }
+
+  /**
+   * Enables or disables a PPP secret.
+   *
+   * This is the primary suspension mechanism, and it works whether or not the
+   * customer is online at the time. Disabling a secret prevents the *next*
+   * login; a live session is dropped separately by the caller.
+   *
+   * Throws rather than returning false when the secret is missing, because
+   * "the router has no such user" and "the router is unreachable" call for
+   * completely different responses, and silently treating the first as success
+   * is how a suspended customer keeps browsing.
+   */
+  async setSecretDisabled(name: string, disabled: boolean): Promise<boolean> {
+    if (!name) throw new RouterOsError("A username is needed to change access.");
+
+    const secret = await this.findSecret(name);
+    if (!secret) {
+      throw new RouterOsError(
+        `${name} has no PPP secret on this router.`,
+        404,
+        "Check the username matches the one on the router, and that the secret exists under PPP → Secrets."
+      );
+    }
+
+    const wanted = disabled ? "yes" : "no";
+    if (secret.disabled === disabled) return true; // already in the wanted state
+
+    await this.call(`/ppp/secret/${encodeURIComponent(secret.id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ disabled: wanted }),
+    });
+    return true;
+  }
+
+  /**
+   * Changes the rate-limit profile a secret uses. Phase A's sibling: a package
+   * change has to reach the router or "20 Mbps" is a label on a bill.
+   */
+  async setSecretProfile(name: string, profile: string): Promise<boolean> {
+    const secret = await this.findSecret(name);
+    if (!secret) {
+      throw new RouterOsError(
+        `${name} has no PPP secret on this router, so its profile cannot be changed.`,
+        404
+      );
+    }
+    if (secret.profile === profile) return true;
+
+    await this.call(`/ppp/secret/${encodeURIComponent(secret.id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ profile }),
+    });
+    return true;
+  }
+
+  /**
+   * Creates a PPP secret, or updates the fields that exist on an already-provisioned
+   * subscriber. Password is only ever sent, never read back: RouterOS does not
+   * return it, and a client that tried would be asking for a secret it should
+   * not handle.
+   */
+  async upsertSecret(input: {
+    name: string;
+    password: string;
+    profile?: string;
+    disabled?: boolean;
+    localAddress?: string;
+    remoteAddress?: string;
+    service?: string;
+  }): Promise<boolean> {
+    const body: Record<string, string> = {
+      name: input.name,
+      password: input.password,
+    };
+    if (input.profile) body.profile = input.profile;
+    if (input.disabled !== undefined) body.disabled = input.disabled ? "yes" : "no";
+    if (input.localAddress) body["local-address"] = input.localAddress;
+    if (input.remoteAddress) body["remote-address"] = input.remoteAddress;
+    if (input.service) body.service = input.service;
+
+    const existing = await this.findSecret(input.name);
+    if (existing) {
+      // Never re-send the password on an update: an unnecessary PATCH carrying
+      // a credential is a credential in a log somewhere.
+      const patch: Record<string, string> = {};
+      if (input.profile) patch.profile = input.profile;
+      if (input.disabled !== undefined) patch.disabled = input.disabled ? "yes" : "no";
+      if (Object.keys(patch).length === 0) return true;
+      await this.call(`/ppp/secret/${encodeURIComponent(existing.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      return true;
+    }
+
+    await this.call("/ppp/secret", { method: "PUT", body: JSON.stringify(body) });
+    return true;
+  }
+
+  /** Deletes a PPP secret entirely — used when a subscriber leaves for good. */
+  async removeSecret(name: string): Promise<boolean> {
+    const secret = await this.findSecret(name);
+    if (!secret) return true; // already gone
+    await this.call(`/ppp/secret/${encodeURIComponent(secret.id)}`, {
+      method: "DELETE",
+    });
+    return true;
+  }
+
+  /**
    * Blocks or unblocks by IP in the firewall's address list, which is how a
    * MikroTik setup without a hotspot server does it. The list has to exist
    * first, so it is created on demand.

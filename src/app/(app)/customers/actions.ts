@@ -11,6 +11,7 @@ import { addDays, round2, startOfDay } from "@/lib/utils";
 import { prismaLog } from "@/lib/services/activity";
 import { changePackage, deleteCustomer, disconnectCustomer, reconnectCustomer, renewCustomer, suspendCustomer } from "@/lib/services/customers";
 import { syncCustomerBilling } from "@/lib/services/billing";
+import { enforceReconnect, enforceSuspend } from "@/lib/services/network-enforcement";
 
 export type FormState = {
   errors?: FieldErrors;
@@ -221,21 +222,48 @@ export async function suspendCustomerAction(
   reason: string
 ): Promise<FormState> {
   if (!reason.trim()) return { formError: "A reason is required to suspend a customer." };
-  return runLifecycle(
+  const result = await runLifecycle(
     "customers.edit",
     (tx, userId) => suspendCustomer(tx, id, reason, userId),
-    ["/customers", `/customers/${id}`, "/dashboard"],
+    ["/customers", `/customers/${id}`, "/dashboard", "/network"],
     "Customer suspended."
   );
+
+  // The router call happens *after* the transaction has committed, never inside
+  // it: a router that is offline must not roll back a suspension the office has
+  // already decided on, and a network call held open across a transaction holds a
+  // connection and a row lock for as long as the router takes to answer.
+  if (result.success) {
+    const enforced = await enforceSuspend(id);
+    if (!enforced.ok && !enforced.skipped) {
+      // The suspension itself stands — it is committed and correct. What failed
+      // is telling the router, which is queued for retry. Saying so is the whole
+      // point: an operator who believes the line is dead will not chase it.
+      return {
+        success: `Customer suspended in the system, but the router was not reached: ${enforced.detail} It will be retried automatically.`,
+      };
+    }
+  }
+  return result;
 }
 
 export async function reconnectCustomerAction(id: string): Promise<FormState> {
-  return runLifecycle(
+  const result = await runLifecycle(
     "customers.edit",
     (tx, userId) => reconnectCustomer(tx, id, userId),
-    ["/customers", `/customers/${id}`, "/dashboard"],
+    ["/customers", `/customers/${id}`, "/dashboard", "/network"],
     "Customer reconnected."
   );
+
+  if (result.success) {
+    const enforced = await enforceReconnect(id);
+    if (!enforced.ok && !enforced.skipped) {
+      return {
+        success: `Customer reconnected in the system, but the router was not reached: ${enforced.detail} It will be retried automatically.`,
+      };
+    }
+  }
+  return result;
 }
 
 export async function disconnectCustomerAction(
@@ -243,12 +271,18 @@ export async function disconnectCustomerAction(
   reason: string
 ): Promise<FormState> {
   if (!reason.trim()) return { formError: "A reason is required to disconnect a customer." };
-  return runLifecycle(
+  const result = await runLifecycle(
     "customers.delete",
     (tx, userId) => disconnectCustomer(tx, id, reason, userId),
-    ["/customers", `/customers/${id}`, "/dashboard"],
+    ["/customers", `/customers/${id}`, "/dashboard", "/network"],
     "Customer disconnected."
   );
+
+  // A disconnect is the end of the relationship, so the PPP secret is removed
+  // rather than merely disabled — otherwise the next subscriber assigned the same
+  // address inherits somebody else's credentials.
+  if (result.success) await enforceSuspend(id);
+  return result;
 }
 
 export async function renewCustomerAction(

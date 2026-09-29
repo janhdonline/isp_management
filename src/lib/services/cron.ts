@@ -169,6 +169,20 @@ export async function sweepExpiry(): Promise<JobResult> {
     });
 
     if (past.length) {
+      // The router work is queued, not done here. A cron request that made 300
+      // sequential router calls would take minutes, hit the platform timeout,
+      // and then re-run and do it all again — and a router that is down would
+      // stall the whole sweep, leaving paying customers suspended and nobody
+      // enforcing it. One row per customer means the retry job can work through
+      // them at whatever pace the network allows.
+      const withRouters = await prisma.customer.findMany({
+        where: {
+          id: { in: past.map((c) => c.id) },
+          routerId: { not: null },
+        },
+        select: { id: true, username: true, routerId: true },
+      });
+
       await prisma.$transaction(async (tx) => {
         await tx.customer.updateMany({
           where: { id: { in: past.map((c) => c.id) } },
@@ -179,11 +193,26 @@ export async function sweepExpiry(): Promise<JobResult> {
             suspendedAt: now,
           },
         });
+
+        if (withRouters.length) {
+          await tx.networkAction.createMany({
+            data: withRouters.map((c) => ({
+              customerId: c.id,
+              routerId: c.routerId,
+              username: c.username,
+              action: "suspend",
+              status: "Pending",
+            })),
+          });
+        }
+
         await prismaLog(tx, {
           action: "Suspend",
           entity: "Customer",
           entityId: undefined,
-          summary: `Auto-suspended ${past.length} customer(s) past the grace period`,
+          summary:
+            `Auto-suspended ${past.length} customer(s) past the grace period; ` +
+            `${withRouters.length} queued for router enforcement`,
         });
       });
       suspended = past.length;
@@ -259,7 +288,30 @@ export async function sendScheduledMessages(): Promise<JobResult> {
 }
 
 /* ------------------------------------------------------------------ */
-/* 4. Automatic collection                                            */
+/* 4. Router enforcement retries                                       */
+/* ------------------------------------------------------------------ */
+
+export async function retryNetworkActions(): Promise<JobResult> {
+  const { retryPendingNetworkActions, pendingEnforcementCount } = await import(
+    "@/lib/services/network-enforcement"
+  );
+  const stats = await retryPendingNetworkActions();
+
+  const stillPending = await pendingEnforcementCount();
+  return {
+    ran: stats.done,
+    skipped: `${stats.retried} retried, ${stats.failed} failed`,
+    note:
+      stillPending > 0
+        ? `${stillPending} router action(s) still waiting — a router is probably unreachable. The database is correct either way; the network will catch up.`
+        : stats.givenUp > 0
+          ? `${stats.givenUp} action(s) given up after too many attempts — check Network → Enforcement.`
+          : undefined,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 5. Automatic collection                                            */
 /* ------------------------------------------------------------------ */
 
 export async function collectPayments(): Promise<JobResult> {
@@ -360,6 +412,7 @@ export async function runAllJobs() {
     invoices: generateMonthlyInvoices,
     expiry: sweepExpiry,
     messages: sendScheduledMessages,
+    enforcement: retryNetworkActions,
     collection: collectPayments,
     network: syncNetwork,
     backup: runScheduledBackup,

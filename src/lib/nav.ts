@@ -89,6 +89,7 @@ export const NAV: NavItem[] = [
       { label: "OLT", href: "/network/olt", permission: "network.view" },
       { label: "ONU", href: "/network/onu", permission: "network.view" },
       { label: "Bandwidth", href: "/network/bandwidth", permission: "network.view" },
+      { label: "Enforcement", href: "/network/enforcement", permission: "network.view" },
     ],
   },
   {

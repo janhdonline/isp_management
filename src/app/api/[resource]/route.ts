@@ -9,6 +9,12 @@ import { listAccounts } from "@/lib/services/accounts";
 import { listOnline } from "@/lib/services/network";
 import { prismaLog } from "@/lib/services/activity";
 import { recordPayment, syncCustomerBilling } from "@/lib/services/billing";
+import {
+  enforceReconnect,
+  enforceSuspend,
+  maybeAutoReconnect,
+} from "@/lib/services/network-enforcement";
+import { disconnectCustomer, reconnectCustomer, renewCustomer, suspendCustomer } from "@/lib/services/customers";
 import { round2 } from "@/lib/utils";
 import { PAYMENT_METHODS } from "@/lib/enums";
 
@@ -102,10 +108,124 @@ const paymentBody = z.object({
  * Payment intake. Runs in a single database transaction so the invoice,
  * customer due, account balance and receipt can never drift apart.
  */
+/**
+ * Customer lifecycle over REST.
+ *
+ * Suspending from the browser works, but an ISP with a billing system of its
+ * own — or a handheld terminal in the field — has no way to reach it, and the
+ * most common automated case by far is "this account is unpaid, cut it off". The
+ * same enforcement path is used as the screens, so a suspension from here is
+ * queued for the router in exactly the same way.
+ *
+ * The response reports what happened on the network separately from what
+ * happened in the database. Those can differ, and a caller that is told "done"
+ * when only the database changed will never check again.
+ */
 export async function POST(request: Request, ctx: { params: Promise<{ resource: string }> }) {
   const { resource } = await ctx.params;
-  if (resource !== "payments") {
+  if (resource !== "payments" && resource !== "lifecycle") {
     return Response.json({ error: `POST is not supported for "${resource}"` }, { status: 405 });
+  }
+
+  if (resource === "lifecycle") {
+    const body = (await request.json().catch(() => null)) as {
+      customerId?: string;
+      action?: string;
+      reason?: string;
+      days?: number;
+    } | null;
+
+    const action = body?.action;
+    if (!body?.customerId || !action) {
+      return Response.json(
+        { error: "customerId and action are required" },
+        { status: 400 }
+      );
+    }
+
+    try {
+      await requirePermissionFromRequest(request, "customers.edit");
+    } catch {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const customer = await prisma.customer.findUnique({
+      where: { id: body.customerId },
+      select: { id: true, name: true, username: true, connectionStatus: true },
+    });
+    if (!customer) {
+      return Response.json({ error: "No such customer" }, { status: 404 });
+    }
+
+    try {
+      const id = body.customerId;
+
+      if (action === "suspend") {
+        if (!body.reason?.trim()) {
+          return Response.json({ error: "A reason is required to suspend" }, { status: 400 });
+        }
+        await prisma.$transaction((tx) =>
+          suspendCustomer(tx, id, body.reason!.trim())
+        );
+        // After the commit, never inside it: a router call held open across the
+        // transaction holds a connection and a lock for as long as it takes.
+        const network = await enforceSuspend(id);
+        return Response.json({
+          ok: true,
+          customerId: id,
+          connectionStatus: "Suspended",
+          // Deliberately not flattened into `ok`: the database is correct and
+          // the router may not be, and the caller has to be able to tell.
+          network: { applied: network.ok, detail: network.detail, queued: network.queued ?? false },
+        });
+      }
+
+      if (action === "reconnect") {
+        await prisma.$transaction((tx) => reconnectCustomer(tx, id));
+        const network = await enforceReconnect(id);
+        return Response.json({
+          ok: true,
+          customerId: id,
+          connectionStatus: "Active",
+          network: { applied: network.ok, detail: network.detail, queued: network.queued ?? false },
+        });
+      }
+
+      if (action === "disconnect") {
+        if (!body.reason?.trim()) {
+          return Response.json({ error: "A reason is required to disconnect" }, { status: 400 });
+        }
+        await prisma.$transaction((tx) =>
+          disconnectCustomer(tx, id, body.reason!.trim())
+        );
+        const network = await enforceSuspend(id);
+        return Response.json({
+          ok: true,
+          customerId: id,
+          connectionStatus: "Disconnected",
+          network: { applied: network.ok, detail: network.detail, queued: network.queued ?? false },
+        });
+      }
+
+      if (action === "renew") {
+        const days = Number(body.days ?? 0);
+        if (!days || days < 1 || days > 3650) {
+          return Response.json({ error: "days must be between 1 and 3650" }, { status: 400 });
+        }
+        await prisma.$transaction((tx) => renewCustomer(tx, id, days));
+        return Response.json({ ok: true, customerId: id, extendedDays: days });
+      }
+
+      return Response.json(
+        { error: `Unknown action "${action}". Use suspend, reconnect, disconnect, or renew.` },
+        { status: 400 }
+      );
+    } catch (e) {
+      return Response.json(
+        { error: e instanceof Error ? e.message : "Action failed" },
+        { status: 400 }
+      );
+    }
   }
 
   let session;
@@ -170,6 +290,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ resource: 
 
     await syncCustomerBilling(d.customerId);
 
+    // Same rule as the screens: a payment that clears the dues puts a suspended
+    // customer's line back, so an API-driven payment behaves identically to one
+    // typed into the UI.
+    const restored = await maybeAutoReconnect(d.customerId, session.id);
+
     return Response.json(
       {
         ok: true,
@@ -180,6 +305,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ resource: 
           method: payment.method,
           paymentDate: payment.paymentDate,
         },
+        // Reported rather than hidden: a caller integrating against this should
+        // be able to tell whether the line came back.
+        network: restored
+          ? { reconnected: restored.ok, detail: restored.detail }
+          : null,
       },
       { status: 201 }
     );

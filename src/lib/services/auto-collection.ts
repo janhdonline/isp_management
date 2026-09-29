@@ -3,6 +3,7 @@ import { getSettings } from "@/lib/settings";
 import { nextNumber, type Tx } from "@/lib/counter";
 import { dispatch } from "@/lib/services/messaging";
 import { recordPayment } from "@/lib/services/billing";
+import { maybeAutoReconnect } from "@/lib/services/network-enforcement";
 import { round2 } from "@/lib/utils";
 import { prismaLog } from "@/lib/services/activity";
 
@@ -174,6 +175,18 @@ export async function collectAutomaticPayments(options?: {
           },
         });
       });
+
+      // A mandate that settles the last invoice should bring the line back for
+      // the same reason a manual payment does.
+      const restored = await maybeAutoReconnect(customer.id);
+      if (restored?.ok) {
+        result.lines.push({
+          customer: customer.username,
+          outcome: "collected",
+          detail: `${target.invoiceNumber} settled and the line was reconnected`,
+          amount: 0,
+        });
+      }
 
       result.collected += 1;
 
