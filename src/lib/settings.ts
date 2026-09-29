@@ -70,6 +70,10 @@ export const DEFAULT_SETTINGS: {
   { key: "billing.lateFee", value: "0", group: "Billing" },
   { key: "billing.autoInvoice", value: "true", group: "Billing" },
   { key: "billing.autoSuspend", value: "true", group: "Billing" },
+  { key: "billing.autoCollect", value: "false", group: "Billing" },
+  { key: "billing.gatewayUrl", value: "", group: "Billing" },
+  { key: "billing.gatewayKey", value: "", group: "Billing", isSecret: true },
+  { key: "app.url", value: "http://localhost:3000", group: "General" },
   { key: "billing.invoicePrefix", value: "INV", group: "Billing" },
   { key: "billing.receiptPrefix", value: "RCP", group: "Billing" },
   { key: "billing.paymentPrefix", value: "PAY", group: "Billing" },
@@ -109,7 +113,7 @@ export const DEFAULT_SETTINGS: {
   { key: "api.emailSmtpUser", value: "", group: "API" },
   { key: "api.emailSmtpPass", value: "", group: "API", isSecret: true },
   { key: "api.emailSmtpSecure", value: "true", group: "API" },
-  { key: "api.whatsappUrl", value: "", group: "API" },
+  { key: "api.whatsappUrl", value: "", group: "API" }, // WhatsApp phone number id
   { key: "api.whatsappToken", value: "", group: "API", isSecret: true },
 
   // Backup

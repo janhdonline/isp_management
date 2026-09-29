@@ -14,6 +14,7 @@ import {
   formatCurrency, formatDate, formatDateTime, formatBytes, formatNumber,
   formatUptime, daysUntil, relativeTime,
 } from "@/lib/utils";
+import { FileDown } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -337,6 +338,24 @@ function BillingTab({ customer, metrics }: { customer: Customer; metrics: { outs
     { key: "paid", header: "Paid", align: "right", cell: (i) => <span className="tnum text-xs">{formatCurrency(i.paid)}</span>, exportValue: (i) => i.paid },
     { key: "balance", header: "Balance", align: "right", cell: (i) => <span className={`tnum text-xs font-medium ${i.total - i.paid > 0 ? "text-red-600 dark:text-red-400" : ""}`}>{formatCurrency(i.total - i.paid)}</span>, exportValue: (i) => i.total - i.paid },
     { key: "status", header: "Status", align: "right", cell: (i) => <StatusBadge status={i.status} />, exportValue: (i) => i.status },
+    {
+      key: "pdf",
+      header: "",
+      align: "right",
+      width: "40px",
+      // Saving the file needs a real navigation, not a router push, so this
+      // is an anchor with `download` rather than a link.
+      cell: (i) => (
+        <a
+          href={`/api/pdf/invoice?id=${encodeURIComponent(i.id)}`}
+          download
+          title={`Download ${i.invoiceNumber} as PDF`}
+          className="inline-flex size-7 items-center justify-center rounded-md text-fg-subtle transition-colors hover:bg-[var(--surface-3)] hover:text-fg"
+        >
+          <FileDown className="size-3.5" />
+        </a>
+      ),
+    },
   ];
 
   return (

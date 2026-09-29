@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
+import { PwaRegistration } from "./pwa-registration";
 import { cn } from "@/lib/utils";
 import { useLocalStorage } from "@/lib/client-state";
 import type { SessionUser } from "@/lib/auth";
@@ -46,6 +47,9 @@ export function AppShell({
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar user={user} alerts={alerts} onOpenMobile={() => setMobileOpen(true)} />
         <main className={cn("min-w-0 flex-1")}>{children}</main>
+        {/* Sits below the content rather than floating, so it cannot cover a
+            row of a table on a small screen. */}
+        <PwaRegistration />
       </div>
     </div>
   );

@@ -1,7 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 const SESSION_COOKIE = "isp_session";
-const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/health"];
+/**
+ * Reachable without a session. The reset pages belong here for the obvious
+ * reason: someone who cannot sign in is the only person who ever needs them, so
+ * requiring a session would make them unreachable.
+ */
+const PUBLIC_PATHS = [
+  "/login",
+  "/forgot-password",
+  "/reset-password",
+  "/api/auth/login",
+  "/api/health",
+];
 
 /**
  * Called by a scheduler rather than a browser, so it carries no session cookie

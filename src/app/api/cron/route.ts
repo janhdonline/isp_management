@@ -49,7 +49,7 @@ export async function POST(request: Request) {
 export async function GET() {
   return Response.json({
     enabled: Boolean(process.env.CRON_SECRET),
-    jobs: ["invoices", "expiry", "messages", "network", "backup"],
+    jobs: ["invoices", "expiry", "messages", "collection", "network", "backup"],
     method: "POST with an authorization: Bearer $CRON_SECRET header",
   });
 }

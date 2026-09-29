@@ -62,7 +62,7 @@ npm run dev           # dev server
 npm run build         # production build
 npm run start         # serve the production build
 npm run lint          # eslint
-npm test              # unit tests (mock RouterOS, refunds, rate limit, PDF)
+npm test              # 52 unit tests: RouterOS, refunds, shifts, reset, PDF, rate limit
 npm run setup         # prisma migrate deploy + seed
 npm run prisma:seed   # reset + reseed demo data
 npm run db:reset      # drop and recreate the database
@@ -253,6 +253,7 @@ and writes files. With the secret in place it runs four jobs:
 | `invoices` | Raises the subscription invoice for every active customer on the configured cycle, skipping anyone already invoiced this month. |
 | `expiry` | Counts expiring and expired customers and, when auto-suspension is on, suspends those past the grace period. |
 | `messages` | Delivers queued messages whose scheduled time has arrived, claiming each row before sending so a retry cannot double-send. |
+| `collection` | Settles outstanding invoices for customers who have an active payment mandate. |
 | `network` | Pulls live sessions from every configured MikroTik and folds them into the online-user tables. |
 | `backup` | Takes one automatic snapshot a day, once the configured time has passed. |
 

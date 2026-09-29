@@ -820,6 +820,7 @@ async function alignCounters() {
   await seq("receipt", "Receipt", "receiptNumber");
   await seq("ticket", "Ticket", "ticketNumber");
   await seq("transfer", "AccountTransfer", "reference");
+  await seq("shift", "CashShift", "shiftNumber");
   // Refunds reuse the transaction reference column.
   await seq("refund", "AccountTransaction", "reference", '"reference" LIKE \'RFD-%\'');
 }

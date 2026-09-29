@@ -259,7 +259,32 @@ export async function sendScheduledMessages(): Promise<JobResult> {
 }
 
 /* ------------------------------------------------------------------ */
-/* 4. Network sync                                                    */
+/* 4. Automatic collection                                            */
+/* ------------------------------------------------------------------ */
+
+export async function collectPayments(): Promise<JobResult> {
+  const { collectAutomaticPayments } = await import("@/lib/services/auto-collection");
+  const r = await collectAutomaticPayments();
+
+  // The run is only interesting when something went wrong. A clean run is
+  // already visible on the dashboard, and a summary that shouts every day
+  // stops being read.
+  if (r.failed === 0) {
+    return { ran: r.collected, skipped: `${r.skipped} had nothing to pay` };
+  }
+  return {
+    ran: r.collected,
+    skipped: `${r.failed} failed, ${r.skipped} skipped`,
+    note: r.lines
+      .filter((l) => l.outcome === "failed")
+      .slice(0, 5)
+      .map((l) => `${l.customer}: ${l.detail}`)
+      .join("; "),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 5. Network sync                                                    */
 /* ------------------------------------------------------------------ */
 
 export async function syncNetwork(): Promise<JobResult> {
@@ -335,6 +360,7 @@ export async function runAllJobs() {
     invoices: generateMonthlyInvoices,
     expiry: sweepExpiry,
     messages: sendScheduledMessages,
+    collection: collectPayments,
     network: syncNetwork,
     backup: runScheduledBackup,
   })) {

@@ -148,16 +148,22 @@ async function sendEmail(
 
 async function sendWhatsApp(to: string, body: string): Promise<SendOutcome> {
   const s = await getSettings();
-  const url = s["api.whatsappUrl"];
   const token = s["api.whatsappToken"];
+  // Cloud API addresses a message as /{phone-number-id}/messages. Someone who
+  // pastes the full URL into the settings box used to end up with requests to
+  // ".../messages/messages", so the base is built here and the setting is read
+  // as the phone number id.
+  const phoneNumberId = s["api.whatsappUrl"];
 
-  if (!url || !token) {
+  if (!phoneNumberId || !token) {
     return {
       ok: false,
       configured: false,
       error: "WhatsApp API is not configured.",
     };
   }
+
+  const url = `https://graph.facebook.com/v21.0/${phoneNumberId.replace(/^\/+|\/+$/g, "")}/messages`;
 
   try {
     const res = await fetch(url, {
@@ -168,9 +174,10 @@ async function sendWhatsApp(to: string, body: string): Promise<SendOutcome> {
       },
       body: JSON.stringify({
         messaging_product: "whatsapp",
+        recipient_type: "individual",
         to: to.replace(/^\+/, ""),
         type: "text",
-        text: { body },
+        text: { preview_url: false, body },
       }),
       signal: AbortSignal.timeout(20_000),
     });

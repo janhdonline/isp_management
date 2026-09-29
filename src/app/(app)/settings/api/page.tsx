@@ -20,7 +20,7 @@ const FIELDS: SettingField[] = [
   { key: "api.emailSmtpUser", label: "SMTP Username" },
   { key: "api.emailSmtpPass", label: "SMTP Password", type: "password" },
   { key: "api.emailSmtpSecure", label: "Use TLS", type: "boolean" },
-  { key: "api.whatsappUrl", label: "WhatsApp API URL" },
+  { key: "api.whatsappUrl", label: "WhatsApp Phone Number ID", hint: "The numeric id from Meta, not a full URL" },
   { key: "api.whatsappToken", label: "WhatsApp Token", type: "password" },
 ];
 

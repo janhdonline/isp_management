@@ -38,11 +38,17 @@ model User {
 
   activityLogs ActivityLog[]     @relation("LogActor")
   payments     Payment[]         @relation("PaymentCollector")
+  shiftsHeld   CashShift[]       @relation("ShiftHolder")
+  shiftsClosed CashShift[]       @relation("ShiftCloser")
+  branchId     String?
+  branch       Branch?           @relation("StaffBranch", fields: [branchId], references: [id], onDelete: SetNull)
   invoices     Invoice[]         @relation("InvoiceCreator")
   expenses     Expense[]         @relation("ExpenseCreator")
   customers    Customer[]        @relation("CustomerCreatedBy")
   tickets      Ticket[]          @relation("TicketCreator")
   messages     Notification[]    @relation("MessageSender")
+  resets       PasswordReset[]
+  mandatesCreated PaymentMandate[] @relation("MandateCreator")
   backups      Backup[]
 
   @@index([roleId])
@@ -116,6 +122,8 @@ model Area {
   code      String?  @unique
   zoneId    String?
   zone      Zone?    @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  branchId  String?
+  branch    Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   status    String   @default("Active")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -173,6 +181,8 @@ model Customer {
   altPhone          String?
   email             String?
   nid               String?
+  branchId          String?
+  branch            Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
   dateOfBirth       DateTime?
   gender            String?
   address           String?
@@ -238,6 +248,8 @@ model Customer {
   packageLogs  CustomerPackageChange[]
   notifications Notification[]
   expenses     Expense[]
+  mandates     PaymentMandate[]
+  autoCollections AutoCollectionRun[]
 
   @@index([areaId])
   @@index([packageId])
@@ -290,6 +302,7 @@ model Invoice {
 
   payments  Payment[]
   receipts  Receipt[]
+  autoCollections AutoCollectionRun[]
 
   @@index([customerId])
   @@index([status])
@@ -361,6 +374,9 @@ model Account {
   transactions AccountTransaction[]
   transfersFrom AccountTransfer[] @relation("TransferFrom")
   transfersTo   AccountTransfer[] @relation("TransferTo")
+  shifts        CashShift[]
+  branchId      String?
+  branch        Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
 
   @@index([type])
   @@index([status])
@@ -533,6 +549,8 @@ model Ticket {
   customer     Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
   areaId       String?
   area         Area?     @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  branchId     String?
+  branch       Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
   packageId    String?
   package      Package?  @relation(fields: [packageId], references: [id], onDelete: SetNull)
   subject      String
@@ -703,6 +721,106 @@ model Counter {
   value Int    @default(0)
 }
 
+/// A till held by one member of staff over a period of time: the float they
+/// started with, the cash physically counted at close, and the difference.
+model CashShift {
+  id           String   @id @default(cuid())
+  shiftNumber  String   @unique
+  accountId    String
+  account      Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User     @relation("ShiftHolder", fields: [userId], references: [id], onDelete: Cascade)
+  openingFloat Float    @default(0)
+  countedCash  Float?
+  expectedCash Float?
+  /// Counted minus expected, recorded rather than corrected away: a till that
+  /// silently adjusts itself teaches nobody anything.
+  variance     Float?
+  status       String   @default("Open") // Open | Closed
+  note         String?
+  openedAt     DateTime @default(now())
+  closedAt     DateTime?
+  closedById   String?
+  closedBy     User?    @relation("ShiftCloser", fields: [closedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+
+  @@index([accountId, status])
+  @@index([openedAt])
+}
+
+/// An office or cost centre inside one company. Not a tenant boundary: this is
+/// for attributing money and staff to a location, not for separating data
+/// between separate businesses.
+model Branch {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  city         String?
+  address      String?
+  phone        String?
+  managerName  String?
+  isDefault    Boolean  @default(false)
+  status       String   @default("Active")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  accounts  Account[]
+  areas     Area[]
+  customers Customer[]
+  staff     User[]     @relation("StaffBranch")
+  tickets   Ticket[]
+
+  @@index([status])
+}
+
+/// A standing instruction to take payment without asking each time. A card or
+/// account number is not stored here — only the gateway's own token for it.
+model PaymentMandate {
+  id           String    @id @default(cuid())
+  reference    String    @unique
+  customerId   String
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  method       String    // Bank Transfer | Mobile Wallet | Card
+  accountNumber String?
+  mobileNumber String?
+  bankName     String?
+  /// A ceiling the customer agreed to. A balance above it is left for a human.
+  maxAmount    Float?
+  status       String    @default("Active") // Active | Paused | Cancelled
+  lastAttemptAt DateTime?
+  lastSuccessAt DateTime?
+  lastFailureReason String?
+  successCount Int       @default(0)
+  failureCount Int       @default(0)
+  createdById  String?
+  createdBy    User?     @relation("MandateCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([status])
+  @@index([customerId])
+}
+
+/// One row per automatic collection attempt, kept whether it succeeded or not.
+/// An attempt that was charged but not recorded has to be findable, or the
+/// customer gets billed twice and nobody knows why.
+model AutoCollectionRun {
+  id            String   @id @default(cuid())
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  invoiceId     String?
+  invoice       Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  amount        Float
+  method        String
+  status        String   @default("Collected") // Collected | Failed | Unrecorded | Skipped
+  transactionId String?
+  note          String?
+  createdAt     DateTime @default(now())
+
+  @@index([status])
+  @@index([createdAt])
+}
+
 /// Failed sign-in attempts, so a lockout survives a restart and is shared
 /// across every instance behind a load balancer.
 model LoginAttempt {
@@ -710,4 +828,19 @@ model LoginAttempt {
   count   Int      @default(0)
   firstAt DateTime @default(now())
   ip      String?
+}
+
+/// A password reset in flight. The token is stored hashed: reading this table
+/// must not hand out the ability to take over an account.
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }

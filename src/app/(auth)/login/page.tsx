@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { getSettings } from "@/lib/settings";
@@ -37,7 +38,16 @@ export default async function LoginPage() {
             <LoginForm />
           </div>
 
-          <div className="mt-8 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3.5">
+          <p className="mt-3 text-center text-sm">
+            <Link
+              href="/forgot-password"
+              className="font-medium text-fg-muted underline-offset-4 hover:text-brand-600 hover:underline"
+            >
+              Forgot your password?
+            </Link>
+          </p>
+
+          <div className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3.5">
             <p className="text-xs font-semibold text-[var(--fg)]">Demo credentials</p>
             <dl className="mt-2 space-y-1 font-mono text-[11px] text-fg-muted">
               <div className="flex justify-between gap-3">
