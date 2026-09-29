@@ -89,6 +89,7 @@ export const DEFAULT_SETTINGS: {
   { key: "network.mikrotikUsername", value: "apiuser", group: "Network" },
   { key: "network.mikrotikPassword", value: "", group: "Network", isSecret: true },
   { key: "network.mikrotikSsl", value: "false", group: "Network" },
+  { key: "network.mikrotikSessionSource", value: "ppp", group: "Network" },
   { key: "network.oltVendor", value: "Huawei", group: "Network" },
   { key: "network.oltHost", value: "10.20.0.1", group: "Network" },
   { key: "network.oltPort", value: "8080", group: "Network" },

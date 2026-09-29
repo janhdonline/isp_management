@@ -2,7 +2,8 @@ import { prisma } from "@/lib/prisma";
 import { type Prisma } from "@/generated/prisma/client";
 import { DEFAULT_PER_PAGE, type ListParams } from "@/lib/query";
 import { round2 } from "@/lib/utils";
-import { getAdapterForRouter } from "./network-adapter";
+import { adapterForRouter, getAdapterForRouter } from "./network-adapter";
+import { getSettings } from "@/lib/settings";
 
 export async function onlineSummary() {
   const rows = await prisma.customer.findMany({
@@ -161,9 +162,53 @@ export async function listRouters() {
   }));
 }
 
+/**
+ * Builds the adapter for a router, falling back to the global MikroTik
+ * credentials in Settings → Network when the row itself has none.
+ *
+ * A small ISP usually has one router, so making everyone create a per-router
+ * account before anything works would be friction for no benefit. A row that
+ * does carry its own credentials still takes precedence, so per-router setup
+ * remains possible when there is more than one device.
+ */
+export async function adapterForRouterRow(row: {
+  id: string;
+  name: string;
+  ipAddress: string;
+  apiPort: number;
+  apiUser: string | null;
+  apiSecretEnc: string | null;
+  useSsl: boolean;
+  sessionSource: string;
+}) {
+  if (row.apiUser && row.apiSecretEnc) {
+    return getAdapterForRouter(row);
+  }
+
+  const s = await getSettings();
+  const host = s["network.mikrotikApiHost"];
+  const user = s["network.mikrotikUsername"];
+  const secret = s["network.mikrotikPassword"];
+
+  if (!host || !user || !secret) {
+    return getAdapterForRouter(row);
+  }
+
+  return adapterForRouter({
+    id: row.id,
+    name: row.name,
+    ipAddress: host,
+    apiPort: Number(s["network.mikrotikApiPort"] ?? 8728),
+    apiUser: user,
+    apiSecret: secret,
+    useSsl: s["network.mikrotikSsl"] === "true",
+    sessionSource: s["network.mikrotikSessionSource"] ?? row.sessionSource,
+  });
+}
+
 export async function routerHealth(id: string) {
   const router = await prisma.router.findUniqueOrThrow({ where: { id } });
-  const adapter = await getAdapterForRouter(router);
+  const adapter = await adapterForRouterRow(router);
   const [health, users] = await Promise.all([adapter.health(), adapter.activeUsers()]);
 
   await prisma.router.update({
@@ -177,7 +222,7 @@ export async function routerHealth(id: string) {
       lastSyncAt: new Date(),
     },
   });
-  return { router, health, users, adapterName: adapter.name };
+  return { router, health, users, adapterName: adapter.name, live: adapter.live };
 }
 
 export async function listOlts() {

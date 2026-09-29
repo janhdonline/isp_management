@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { routerHealth } from "@/lib/services/network";
+import { TriangleAlert } from "lucide-react";
 import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import { RouterDetailView } from "@/components/network/network-tables";
 
@@ -25,6 +26,26 @@ export default async function RouterDetailPage({ params }: { params: Promise<{ i
         breadcrumb={[{ label: "Network", href: "/network" }, { label: "Routers", href: "/network/routers" }, { label: data.router.name }]}
       />
       <PageContainer>
+        {/* Without credentials the readings below are simulated, so say so
+            rather than letting them pass for the router's real state. */}
+        {data.live ? null : (
+          <div className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+            <span>
+              <strong>Simulated readings.</strong> No MikroTik API credentials are configured,
+              so the figures below come from the demo data source and are not this router&apos;s
+              real state. Add them under Settings → Network, then press Refresh.
+            </span>
+          </div>
+        )}
+        {data.health.error ? (
+          <div className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+            <span>
+              <strong>Could not reach the router.</strong> {data.health.error}
+            </span>
+          </div>
+        ) : null}
         <RouterDetailView
           router={{
             id: data.router.id,

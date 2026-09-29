@@ -192,14 +192,15 @@ export async function testMikrotikAction(): Promise<AcctFormState> {
   if (!s["network.mikrotikPassword"]) {
     return { formError: "No MikroTik API password configured under Settings → Network." };
   }
-  const { MikrotikAdapter } = await import("@/lib/services/network-adapter");
-  const adapter = new MikrotikAdapter(
-    s["network.mikrotikApiHost"],
-    Number(s["network.mikrotikApiPort"] ?? 8728),
-    s["network.mikrotikUsername"],
-    s["network.mikrotikPassword"],
-    s["network.mikrotikSsl"] === "true"
-  );
+  const { adapterForRouter } = await import("@/lib/services/network-adapter");
+  const adapter = adapterForRouter({
+    ipAddress: s["network.mikrotikApiHost"],
+    apiPort: Number(s["network.mikrotikApiPort"] ?? 8728),
+    apiUser: s["network.mikrotikUsername"] || null,
+    apiSecret: s["network.mikrotikPassword"] || null,
+    useSsl: s["network.mikrotikSsl"] === "true",
+    sessionSource: s["network.mikrotikSessionSource"] === "hotspot" ? "hotspot" : "ppp",
+  });
   const health = await adapter.health();
   await logActivity(
     { action: "Test", entity: "Setting", entityId: "network.mikrotik", summary: `MikroTik test: ${health.status}` },

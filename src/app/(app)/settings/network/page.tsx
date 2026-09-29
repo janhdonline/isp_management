@@ -16,6 +16,13 @@ const FIELDS: SettingField[] = [
   { key: "network.mikrotikUsername", label: "MikroTik API User" },
   { key: "network.mikrotikPassword", label: "MikroTik API Password", type: "password" },
   { key: "network.mikrotikSsl", label: "Use SSL for MikroTik API", type: "boolean" },
+  {
+    key: "network.mikrotikSessionSource",
+    label: "Subscribers are terminated on",
+    type: "select",
+    options: ["ppp", "hotspot"],
+    hint: "PPPoE for fibre broadband; Hotspot only if you run a Hotspot server",
+  },
   { key: "network.radiusServer", label: "RADIUS Server" },
   { key: "network.radiusPort", label: "RADIUS Port", type: "number" },
   { key: "network.radiusSecret", label: "RADIUS Shared Secret", type: "password" },
