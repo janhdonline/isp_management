@@ -26,19 +26,35 @@ export function Sidebar({
   onCloseMobile: () => void;
 }) {
   const pathname = usePathname();
-  const [expanded, setExpanded] = React.useState<string[]>([]);
+
+  /** The section that owns a pathname, or null on a page that has no section. */
+  const sectionFor = (path: string) =>
+    NAV.find((n) => n.children && isActivePath(path, n.href))?.href ?? null;
+
+  /**
+   * Which section's submenu is open. An accordion: at most one at a time, so a
+   * menu with eleven sections does not turn into a wall of links.
+   *
+   * Navigation opens the right section on its own, so a section never has to be
+   * reopened by hand after following a link into it. The state is seeded from
+   * the current route as well, so opening a deep link directly — a bookmark, a
+   * refresh, a shared URL — lands with its own section already open.
+   */
+  const [openSection, setOpenSection] = React.useState<string | null>(() =>
+    sectionFor(pathname)
+  );
   const [lastPath, setLastPath] = React.useState(pathname);
 
-  // Derive from the route: keep the active section open when navigation
-  // happens. Adjusting state during render is React's recommended alternative
-  // to syncing it from an effect.
+  // Derive from the route rather than an effect: adjusting state during render
+  // is React's recommended way to reset on a changed input, and it avoids a
+  // frame where the submenu still shows the previous page's section.
   if (pathname !== lastPath) {
     setLastPath(pathname);
-    const active = NAV.find((n) => n.children && isActivePath(pathname, n.href));
-    if (active && !expanded.includes(active.href)) {
-      setExpanded((prev) => [...prev, active.href]);
-    }
+    setOpenSection(sectionFor(pathname));
   }
+
+  const toggleSection = (href: string) =>
+    setOpenSection((prev) => (prev === href ? null : href));
 
   const visible = NAV.filter((n) => !n.permission || hasPermission(permissions, n.permission, isAdmin));
 
@@ -104,7 +120,7 @@ export function Sidebar({
             // A parent that merely contains the current page should not wear the
             // same strong highlight as the child that is actually open.
             const active = isUnder && pathname === item.href;
-            const isOpen = expanded.includes(item.href);
+            const isOpen = openSection === item.href;
             const Icon = item.icon;
             const children = item.children?.filter(
               (c) => !c.permission || hasPermission(permissions, c.permission, isAdmin)
@@ -120,11 +136,7 @@ export function Sidebar({
               onCloseMobile();
               if (!collapsed) return;
               onExpand();
-              if (hasChildren) {
-                setExpanded((prev) =>
-                  prev.includes(item.href) ? prev : [...prev, item.href]
-                );
-              }
+              if (hasChildren) setOpenSection(item.href);
             };
 
             return (
@@ -158,13 +170,7 @@ export function Sidebar({
                     <button
                       aria-label={`Toggle ${item.label} submenu`}
                       aria-expanded={isOpen}
-                      onClick={() =>
-                        setExpanded((prev) =>
-                          prev.includes(item.href)
-                            ? prev.filter((x) => x !== item.href)
-                            : [...prev, item.href]
-                        )
-                      }
+                      onClick={() => toggleSection(item.href)}
                       className="mr-2 shrink-0 rounded p-0.5 opacity-60 transition-opacity hover:opacity-100"
                     >
                       <svg
