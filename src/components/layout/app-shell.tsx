@@ -19,16 +19,24 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = React.useState(false);
-  const [collapseFlag, setCollapseFlag] = useLocalStorage<string>(COLLAPSE_KEY, "1");
+  // "1" = collapsed. The default is expanded: a first-time visitor landing on a
+  // 64px icon rail with no labels reads as a broken sidebar.
+  const [collapseFlag, setCollapseFlag] = useLocalStorage<string>(COLLAPSE_KEY, "0");
   const collapsed = collapseFlag === "1";
 
   const toggle = () => setCollapseFlag(collapsed ? "0" : "1");
+
+  /** Used when a collapsed rail item is clicked, so the panel opens on it. */
+  const expand = () => {
+    if (collapsed) setCollapseFlag("0");
+  };
 
   return (
     <div className="flex min-h-screen bg-[var(--surface-2)]">
       <Sidebar
         collapsed={collapsed}
         onToggleCollapse={toggle}
+        onExpand={expand}
         permissions={user.permissions}
         isAdmin={user.isAdmin}
         mobileOpen={mobileOpen}

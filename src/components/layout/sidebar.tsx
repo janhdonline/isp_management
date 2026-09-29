@@ -11,6 +11,7 @@ import { ChevronsLeft, ChevronsRight } from "lucide-react";
 export function Sidebar({
   collapsed,
   onToggleCollapse,
+  onExpand,
   permissions,
   isAdmin,
   mobileOpen,
@@ -18,6 +19,7 @@ export function Sidebar({
 }: {
   collapsed: boolean;
   onToggleCollapse: () => void;
+  onExpand: () => void;
   permissions: string[];
   isAdmin: boolean;
   mobileOpen: boolean;
@@ -52,13 +54,18 @@ export function Sidebar({
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col bg-sidebar text-sidebar-fg transition-[width,transform] duration-200 lg:static lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 flex max-lg:w-64 flex-col bg-sidebar text-sidebar-fg",
+          "transition-[width,transform] duration-200 lg:static lg:translate-x-0",
           collapsed ? "lg:w-16" : "lg:w-64",
-          "w-64",
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
-        <div className={cn("flex h-16 shrink-0 items-center gap-2.5 px-4", collapsed && "lg:justify-center lg:px-2")}>
+        <div
+          className={cn(
+            "flex h-16 shrink-0 items-center gap-2.5 px-4",
+            collapsed && "lg:justify-center lg:px-2"
+          )}
+        >
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">
             N
           </span>
@@ -68,53 +75,115 @@ export function Sidebar({
               <p className="truncate text-[10px] uppercase tracking-wider text-sidebar-fg/60">ISP Manager</p>
             </div>
           ) : null}
+
+          {/* The toggle lives in the header, where it is actually visible —
+              at the very bottom of a scrollable list it reads as decoration. */}
+          <button
+            onClick={onToggleCollapse}
+            className={cn(
+              "hidden size-7 shrink-0 items-center justify-center rounded-md text-sidebar-fg/60",
+              "transition-colors hover:bg-sidebar-hover hover:text-sidebar-active",
+              "lg:flex",
+              !collapsed && "ml-auto"
+            )}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!collapsed}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {collapsed ? (
+              <ChevronsRight className="size-4" />
+            ) : (
+              <ChevronsLeft className="size-4" />
+            )}
+          </button>
         </div>
 
         <nav className="flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden px-2 pb-4">
           {visible.map((item) => {
-            const active = isActivePath(pathname, item.href);
+            const isUnder = isActivePath(pathname, item.href);
+            // A parent that merely contains the current page should not wear the
+            // same strong highlight as the child that is actually open.
+            const active = isUnder && pathname === item.href;
             const isOpen = expanded.includes(item.href);
             const Icon = item.icon;
             const children = item.children?.filter(
               (c) => !c.permission || hasPermission(permissions, c.permission, isAdmin)
             );
 
+            const hasChildren = !!children && children.length > 0;
+
+            // A collapsed rail has nowhere to show a submenu, so clicking a
+            // section there expands the panel and opens that section. Without
+            // this the icon is a dead end: it navigates to the section root and
+            // the sub-items can never be reached.
+            const handleItemClick = () => {
+              onCloseMobile();
+              if (!collapsed) return;
+              onExpand();
+              if (hasChildren) {
+                setExpanded((prev) =>
+                  prev.includes(item.href) ? prev : [...prev, item.href]
+                );
+              }
+            };
+
             return (
               <div key={item.href}>
-                <Link
-                  href={item.href}
-                  onClick={onCloseMobile}
+                <div
                   className={cn(
-                    "group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
+                    "group flex items-center rounded-lg transition-colors",
                     active
                       ? "bg-brand-600 text-white shadow-sm"
-                      : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-active"
+                      : isUnder
+                        ? "text-sidebar-active"
+                        : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-active"
                   )}
-                  title={collapsed ? item.label : undefined}
                 >
-                  <Icon className="size-4.5 shrink-0" />
-                  {!collapsed ? <span className="flex-1 truncate">{item.label}</span> : null}
-                  {children && children.length > 0 && !collapsed ? (
+                  <Link
+                    href={item.href}
+                    onClick={handleItemClick}
+                    className={cn(
+                      "flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium",
+                      !hasChildren && "pr-2.5"
+                    )}
+                    title={collapsed ? item.label : undefined}
+                  >
+                    <Icon className="size-4.5 shrink-0" />
+                    {!collapsed ? <span className="flex-1 truncate">{item.label}</span> : null}
+                  </Link>
+
+                  {/* A sibling of the link, not a child: a button inside an
+                      anchor is invalid HTML and React warns about it. */}
+                  {hasChildren && !collapsed ? (
                     <button
                       aria-label={`Toggle ${item.label} submenu`}
-                      onClick={(e) => {
-                        e.preventDefault();
+                      aria-expanded={isOpen}
+                      onClick={() =>
                         setExpanded((prev) =>
                           prev.includes(item.href)
                             ? prev.filter((x) => x !== item.href)
                             : [...prev, item.href]
-                        );
-                      }}
-                      className="rounded p-0.5 opacity-60 transition-opacity hover:opacity-100"
+                        )
+                      }
+                      className="mr-2 shrink-0 rounded p-0.5 opacity-60 transition-opacity hover:opacity-100"
                     >
-                      <svg viewBox="0 0 24 24" className={cn("size-3.5 transition-transform", isOpen && "rotate-180")} fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <svg
+                        viewBox="0 0 24 24"
+                        className={cn(
+                          "size-3.5 transition-transform",
+                          isOpen && "rotate-180"
+                        )}
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                      >
                         <path d="m6 9 6 6 6-6" />
                       </svg>
                     </button>
                   ) : null}
-                </Link>
+                </div>
 
-                {children && children.length > 0 && isOpen && !collapsed ? (
+                {hasChildren && isOpen && !collapsed ? (
                   <div className="ml-4 space-y-0.5 border-l border-sidebar-fg/15 pl-2.5 pt-1">
                     {children.map((child) => {
                       const childActive = pathname === child.href || pathname.startsWith(child.href + "/");
@@ -126,8 +195,8 @@ export function Sidebar({
                           className={cn(
                             "block truncate rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
                             childActive
-                              ? "bg-sidebar-hover font-medium text-sidebar-active"
-                              : "text-sidebar-fg/75 hover:text-sidebar-active"
+                              ? "bg-brand-600 font-medium text-white shadow-sm"
+                              : "text-sidebar-fg/75 hover:bg-sidebar-hover hover:text-sidebar-active"
                           )}
                         >
                           {child.label}
@@ -140,14 +209,6 @@ export function Sidebar({
             );
           })}
         </nav>
-
-        <button
-          onClick={onToggleCollapse}
-          className="hidden h-11 shrink-0 items-center justify-center border-t border-sidebar-fg/10 text-sidebar-fg/60 transition-colors hover:bg-sidebar-hover hover:text-sidebar-active lg:flex"
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          {collapsed ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
-        </button>
       </aside>
     </>
   );
