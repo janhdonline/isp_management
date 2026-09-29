@@ -58,11 +58,11 @@ export function Topbar({
   const notificationCount = alerts.expiringToday + alerts.expired + alerts.openTickets;
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--surface)] px-3 sm:px-4">
+    <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 bg-[var(--neu-bg)] px-3 sm:px-4">
       <button
         onClick={onOpenMobile}
         aria-label="Open menu"
-        className="flex size-9 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-[var(--surface-3)] lg:hidden"
+        className="neu-sm neu-press flex size-9 items-center justify-center rounded-full text-fg-muted"
       >
         <Menu className="size-5" />
       </button>
@@ -115,7 +115,7 @@ export function Topbar({
         <button
           onClick={toggle}
           aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          className="flex size-9 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-[var(--surface-3)]"
+          className="neu-sm neu-press flex size-9 items-center justify-center rounded-full text-fg-muted"
         >
           {theme === "dark" ? <Sun className="size-4.5" /> : <Moon className="size-4.5" />}
         </button>

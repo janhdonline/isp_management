@@ -9,7 +9,11 @@
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: var(--font-mono-jet), ui-monospace, "SFMono-Regular", monospace;
 
-  --radius-card: 0.875rem;
+  --radius-card: 1.25rem;
+
+  /* Neumorphic accent gradient */
+  --neu-accent-from: #5b8cff;
+  --neu-accent-to: #8b5cf6;
 
   /* Brand */
   --color-brand-50: #eef4ff;
@@ -36,19 +40,23 @@
 }
 
 :root {
-  --surface: #ffffff;
-  --surface-2: #f8fafc;
-  --surface-3: #f1f5f9;
-  --border: #e2e8f0;
-  --border-strong: #cbd5e1;
+  --surface: #e9edf4;
+  --surface-2: #dfe4ec;
+  --surface-3: #d3dae6;
+  --border: #ccd4e0;
+  --border-strong: #b9c2d2;
   --fg: #0f172a;
-  --fg-muted: #64748b;
-  --fg-subtle: #94a3b8;
-  --ring: #3163ff;
+  --fg-muted: #5b6b82;
+  --fg-subtle: #8b98ad;
+  --ring: #5b8cff;
   --sidebar: #0f172a;
   --sidebar-fg: #cbd5e1;
   --sidebar-active: #ffffff;
   --sidebar-hover: #1e293b;
+  /* Neumorphic (soft-UI) shadow palette */
+  --neu-bg: #dfe4ec;
+  --neu-dark: #b3bccb;
+  --neu-light: #ffffff;
 }
 
 .dark {
@@ -60,11 +68,15 @@
   --fg: #e2e8f0;
   --fg-muted: #94a3b8;
   --fg-subtle: #64748b;
-  --ring: #598eff;
+  --ring: #5b8cff;
   --sidebar: #020617;
   --sidebar-fg: #94a3b8;
   --sidebar-active: #ffffff;
   --sidebar-hover: #1e293b;
+  /* Neumorphic dark variant */
+  --neu-bg: #141926;
+  --neu-dark: #080b12;
+  --neu-light: #242f47;
 }
 
 @theme inline {
@@ -122,6 +134,86 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
+}
+
+/* ==========================================================================
+   Neumorphic (soft-UI) primitives
+   ========================================================================== */
+
+/** Raised soft surface — the default card look. */
+@utility neu {
+  background: var(--neu-bg);
+  border: none;
+  box-shadow:
+    7px 7px 16px var(--neu-dark),
+    -7px -7px 16px var(--neu-light);
+}
+
+/** Smaller raised surface — buttons, pills, chips. */
+@utility neu-sm {
+  background: var(--neu-bg);
+  border: none;
+  box-shadow:
+    4px 4px 10px var(--neu-dark),
+    -4px -4px 10px var(--neu-light);
+}
+
+/** Pressed-in surface — search fields, toggles-off, sliders. */
+@utility neu-inset {
+  background: var(--neu-bg);
+  border: none;
+  box-shadow:
+    inset 4px 4px 10px var(--neu-dark),
+    inset -4px -4px 10px var(--neu-light);
+}
+
+/** Tactile press: extruded -> inset on :active. Pair with neu / neu-sm. */
+@utility neu-press {
+  transition:
+    box-shadow 0.15s ease-out,
+    transform 0.15s ease-out;
+  &:active {
+    box-shadow:
+      inset 4px 4px 10px var(--neu-dark),
+      inset -4px -4px 10px var(--neu-light);
+    transform: scale(0.98);
+  }
+}
+
+/** Brand gradient (blue -> purple) for primary actions / active states. */
+@utility neu-gradient {
+  background: linear-gradient(135deg, var(--neu-accent-from), var(--neu-accent-to));
+}
+
+/** Staggered rise-in for card grids (apply to the grid parent). */
+.stagger-rise > * {
+  animation: isp-fade-in 0.32s ease-out both;
+}
+.stagger-rise > *:nth-child(2) {
+  animation-delay: 0.06s;
+}
+.stagger-rise > *:nth-child(3) {
+  animation-delay: 0.12s;
+}
+.stagger-rise > *:nth-child(4) {
+  animation-delay: 0.18s;
+}
+.stagger-rise > *:nth-child(5) {
+  animation-delay: 0.24s;
+}
+.stagger-rise > *:nth-child(6) {
+  animation-delay: 0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stagger-rise > *,
+  .animate-in-up,
+  .animate-slide-in {
+    animation: none !important;
+  }
+  .neu-press {
+    transition: none;
+  }
 }
 
 @utility focus-ring {
@@ -197,6 +289,13 @@ body {
     display: none !important;
   }
   body {
+    background: #fff;
+  }
+  .neu,
+  .neu-sm,
+  .neu-inset {
+    box-shadow: none;
+    border: 1px solid #d7dce4;
     background: #fff;
   }
 }

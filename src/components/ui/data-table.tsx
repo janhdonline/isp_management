@@ -78,7 +78,7 @@ export function Pagination({
   return (
     <div
       className={cn(
-        "flex flex-col gap-3 border-t border-[var(--border)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between",
+        "flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between",
         className
       )}
     >
@@ -105,12 +105,12 @@ export function Pagination({
       </div>
 
       {totalPages > 1 ? (
-        <nav className="flex items-center gap-1" aria-label="Pagination">
+        <nav className="flex items-center gap-1.5" aria-label="Pagination">
           <button
             onClick={() => setParams({ page: String(page - 1) }, { keepPage: true })}
             disabled={page <= 1}
             aria-label="Previous page"
-            className="flex size-8 items-center justify-center rounded-md border border-[var(--border-strong)] text-fg-muted transition-colors hover:bg-[var(--surface-3)] disabled:opacity-40"
+            className="neu-sm neu-press flex size-8 items-center justify-center rounded-full text-fg-muted disabled:opacity-40"
           >
             <ChevronLeft className="size-4" />
           </button>
@@ -126,10 +126,10 @@ export function Pagination({
                 onClick={() => setParams({ page: String(p) }, { keepPage: true })}
                 aria-current={p === page ? "page" : undefined}
                 className={cn(
-                  "tnum flex size-8 items-center justify-center rounded-md text-xs font-medium transition-colors",
+                  "tnum neu-press flex size-8 items-center justify-center rounded-full text-xs font-medium",
                   p === page
-                    ? "bg-brand-600 text-white"
-                    : "border border-[var(--border-strong)] text-fg-muted hover:bg-[var(--surface-3)]"
+                    ? "neu-gradient text-white shadow-[3px_3px_8px_var(--neu-dark),-3px_-3px_8px_var(--neu-light)]"
+                    : "neu-sm text-fg-muted"
                 )}
               >
                 {p}
@@ -141,7 +141,7 @@ export function Pagination({
             onClick={() => setParams({ page: String(page + 1) }, { keepPage: true })}
             disabled={page >= totalPages}
             aria-label="Next page"
-            className="flex size-8 items-center justify-center rounded-md border border-[var(--border-strong)] text-fg-muted transition-colors hover:bg-[var(--surface-3)] disabled:opacity-40"
+            className="neu-sm neu-press flex size-8 items-center justify-center rounded-full text-fg-muted disabled:opacity-40"
           >
             <ChevronRight className="size-4" />
           </button>
@@ -205,11 +205,11 @@ export function TableToolbar({
   }, [value, q, setParams]);
 
   return (
-    <div className="flex flex-col gap-3 border-b border-[var(--border)] px-4 py-3">
+    <div className="flex flex-col gap-3 px-5 py-4">
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1 sm:max-w-xs">
           <svg
-            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
+            className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -222,7 +222,7 @@ export function TableToolbar({
             value={value}
             onChange={(e) => setValue(e.target.value)}
             placeholder={searchPlaceholder}
-            className="h-9 w-full rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] pl-8 pr-3 text-sm text-[var(--fg)] placeholder:text-fg-subtle focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+            className="neu-inset h-9 w-full rounded-full pl-10 pr-3 text-sm text-[var(--fg)] placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-brand-500/25"
           />
         </div>
 
@@ -231,7 +231,7 @@ export function TableToolbar({
         {hasFilters ? (
           <button
             onClick={() => setParams({ q: null, areaId: null, packageId: null, status: null, billingStatus: null, onlineStatus: null, from: null, to: null, area: null })}
-            className="h-9 rounded-lg px-2.5 text-xs font-medium text-brand-600 transition-colors hover:bg-brand-50 dark:hover:bg-brand-500/10"
+            className="h-9 rounded-full px-3 text-xs font-medium text-brand-600 transition-colors hover:bg-brand-500/10"
           >
             Clear filters
           </button>
@@ -333,12 +333,12 @@ export function DataTableShell<T>({
   const allChecked = selectable && rows.length > 0 && rows.every((r) => selected?.has(rowKey ? rowKey(r, 0) : ""));
 
   return (
-    <div className={cn("overflow-hidden rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)]", className)}>
+    <div className={cn("neu overflow-hidden rounded-[var(--radius-card)]", className)}>
       {toolbar}
       <div className="w-full overflow-x-auto">
         <table className="w-full min-w-full border-collapse text-sm">
           <thead>
-            <tr className="border-b border-[var(--border)] bg-[var(--surface-2)]">
+            <tr className="border-b border-[var(--border)]">
               {selectable ? (
                 <th className="w-10 px-3 py-2.5 text-left">
                   <input
@@ -405,7 +405,7 @@ export function DataTableShell<T>({
                     key={id}
                     onClick={onRowClick ? () => onRowClick(row) : undefined}
                     className={cn(
-                      "border-b border-[var(--border)] last:border-0 transition-colors hover:bg-[var(--surface-2)]",
+                      "border-b border-[var(--border)] last:border-0 transition-colors hover:bg-[var(--surface-3)]/50",
                       isSelected && "bg-brand-50/60 dark:bg-brand-500/5",
                       onRowClick && "cursor-pointer"
                     )}
@@ -488,7 +488,7 @@ export function ExportCsvButton<T>({
       onClick={onClick}
       disabled={rows.length === 0}
       className={cn(
-        "inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--fg)] transition-colors hover:bg-[var(--surface-3)] disabled:opacity-50",
+        "neu-sm neu-press inline-flex h-9 items-center gap-2 rounded-full px-4 text-sm font-medium text-[var(--fg)] disabled:opacity-50",
         className
       )}
     >
@@ -526,7 +526,7 @@ export function FilterSelect({
       onChange={(e) => setParams({ [param]: e.target.value || null })}
       aria-label={placeholder}
       className={cn(
-        "h-9 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-2.5 text-sm text-[var(--fg)] focus:border-brand-500 focus:outline-none",
+        "neu-inset h-9 rounded-full px-3.5 text-sm text-[var(--fg)] focus:outline-none focus:ring-2 focus:ring-brand-500/25",
         width,
         className
       )}

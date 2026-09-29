@@ -5,7 +5,7 @@ import * as React from "react";
 import { Check, ChevronDown } from "lucide-react";
 
 const base =
-  "w-full rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] text-sm text-[var(--fg)] transition-colors placeholder:text-fg-subtle focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 disabled:cursor-not-allowed disabled:bg-[var(--surface-3)] disabled:opacity-70";
+  "neu-inset w-full rounded-full text-sm text-[var(--fg)] transition-shadow placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-brand-500/25 disabled:cursor-not-allowed disabled:opacity-70";
 
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean }>(
   function Input({ className, invalid, ...props }, ref) {
@@ -210,14 +210,14 @@ export function SegmentedControl({
   name: string;
 }) {
   return (
-    <div className="inline-flex rounded-lg border border-[var(--border-strong)] bg-[var(--surface-3)] p-0.5">
+    <div className="neu-inset inline-flex rounded-full p-1">
       {options.map((o) => (
         <label
           key={o.value}
           className={cn(
-            "cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+            "cursor-pointer rounded-full px-3 py-1.5 text-xs font-medium transition-all",
             value === o.value
-              ? "bg-[var(--surface)] text-[var(--fg)] shadow-sm"
+              ? "neu-gradient text-white shadow-[3px_3px_8px_var(--neu-dark),-3px_-3px_8px_var(--neu-light)]"
               : "text-fg-muted hover:text-[var(--fg)]"
           )}
         >

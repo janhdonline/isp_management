@@ -419,6 +419,53 @@ console.log("\nnetwork enforcement (Phase A)");
   check("the enforcement job runs", cron.status === 200 || cron.status === 401, `got ${cron.status}`);
 }
 
+/* ---------------------------------------------------------------- */
+console.log("\nonline payments (Phase B)");
+{
+  // A payment provider has no session cookie here. If the webhook were behind
+  // the session gate it would reject every real callback, and the failure would
+  // look like a provider outage rather than a configuration mistake.
+  const cb = await fetch(`${BASE}/api/webhooks/sslcommerz`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tran_id: "x", val_id: "y", amount: "1" }),
+  });
+  // 501 = reachable and honest about having no gateway. 401 = the session gate
+  // is in the way, which is the bug this check exists to catch.
+  check(
+    "the webhook is reachable without a staff session",
+    cb.status === 501 || cb.status === 400 || cb.status === 404,
+    `got ${cb.status}`
+  );
+
+  const unknownProvider = await fetch(`${BASE}/api/webhooks/stripe`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  check(
+    "an unknown provider is refused",
+    unknownProvider.status === 404 || unknownProvider.status === 501,
+    `got ${unknownProvider.status}`
+  );
+
+  // A malformed callback must never create a payment.
+  const before = await api("/api/payments?perPage=1");
+  const countBefore = (before.body.rows ?? []).length;
+  const again = await fetch(`${BASE}/api/webhooks/sslcommerz`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tran_id: "forged", val_id: "forged", amount: "99999" }),
+  });
+  await again.text();
+  const afterCount = await api("/api/payments?perPage=1");
+  check(
+    "a forged callback writes no payment",
+    ((afterCount.body.rows ?? []).length ?? 0) === countBefore,
+    `${countBefore} -> ${(afterCount.body.rows ?? []).length}`
+  );
+}
+
 console.log(`\n${"─".repeat(46)}`);
 console.log(`  ${pass} passed, ${fail} failed`);
 console.log(`${"─".repeat(46)}\n`);

@@ -196,7 +196,7 @@ export function DashboardView({
             success("Dashboard refreshed", "Reloaded the latest figures.");
           }}
           disabled={isPending}
-          className="inline-flex h-9 shrink-0 items-center gap-2 self-start rounded-lg border border-[var(--border-strong)] px-3 text-sm font-medium transition-colors hover:bg-[var(--surface-3)] disabled:opacity-60"
+          className="neu-sm neu-press inline-flex h-10 shrink-0 items-center gap-2 self-start rounded-full px-4 text-sm font-medium disabled:opacity-60"
         >
           <RefreshCcw className={isPending ? "size-4 animate-spin" : "size-4"} />
           Refresh
@@ -204,14 +204,14 @@ export function DashboardView({
       </div>
 
       {/* quick actions */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {QUICK_ACTIONS.map((a) => (
           <Link
             key={a.href}
             href={a.href}
-            className="flex items-center gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm font-medium transition-all hover:border-brand-300 hover:shadow-sm dark:hover:border-brand-700"
+            className="neu-sm neu-press flex items-center gap-2.5 rounded-full px-4 py-3 text-sm font-medium"
           >
-            <a.icon className="size-4 shrink-0 text-brand-600" />
+            <a.icon className="size-4 shrink-0 text-[#6d6df5]" />
             <span className="truncate">{a.label}</span>
           </Link>
         ))}
@@ -264,7 +264,7 @@ export function DashboardView({
               description="Money received in the selected period"
               icon={<TrendingUp />}
               action={
-                <div className="flex gap-1">
+                <div className="neu-inset flex gap-1 rounded-full p-1">
                   {[
                     ["today", "Today"],
                     ["week", "Week"],
@@ -274,9 +274,9 @@ export function DashboardView({
                     <button
                       key={v}
                       onClick={() => onRange(v)}
-                      className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${
                         rangeValue === v && v !== "custom"
-                          ? "bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300"
+                          ? "neu-gradient text-white shadow-[3px_3px_8px_var(--neu-dark),-3px_-3px_8px_var(--neu-light)]"
                           : "text-fg-muted hover:text-[var(--fg)]"
                       }`}
                     >
@@ -288,7 +288,7 @@ export function DashboardView({
             />
             <CardBody className="pb-2">
               {hasCollection ? (
-                <TrendChart data={charts.collection} series={[{ key: "value", label: "Collected", color: "#3163ff", type: "area" }]} money />
+                <TrendChart data={charts.collection} series={[{ key: "value", label: "Collected", color: "#7c6df2", type: "area" }]} money />
               ) : (
                 <EmptyState title="No collection in this period" description="Payments recorded in the selected range will appear here." />
               )}
@@ -336,7 +336,7 @@ export function DashboardView({
               ) : (
                 <BarChartView
                   data={charts.packageChart}
-                  series={[{ key: "value", label: "Customers" }]}
+                  series={[{ key: "value", label: "Customers", color: "#6d7cf5" }]}
                   stacked={false}
                   horizontal
                   height={Math.max(200, charts.packageChart.length * 30)}
@@ -361,7 +361,7 @@ export function DashboardView({
               actions={
                 <>
                   <ExportCsvButton rows={stats.expiring} columns={expiringColumns} filename="expiring" label="Export" />
-                  <Link href="/customers/expiring" className="inline-flex h-9 items-center gap-1 rounded-lg px-2.5 text-sm font-medium text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-500/10">
+                  <Link href="/customers/expiring" className="inline-flex h-9 items-center gap-1 rounded-full px-3 text-sm font-medium text-brand-600 transition-colors hover:bg-brand-500/10">
                     View all <ArrowRight className="size-3.5" />
                   </Link>
                 </>
@@ -384,7 +384,7 @@ export function DashboardView({
             <TableToolbar
               searchPlaceholder="Search online users..."
               actions={
-                <Link href="/customers/online" className="inline-flex h-9 items-center gap-1 rounded-lg px-2.5 text-sm font-medium text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-500/10">
+                <Link href="/customers/online" className="inline-flex h-9 items-center gap-1 rounded-full px-3 text-sm font-medium text-brand-600 transition-colors hover:bg-brand-500/10">
                   View all <ArrowRight className="size-3.5" />
                 </Link>
               }
@@ -405,7 +405,7 @@ export function DashboardView({
               actions={
                 <>
                   <ExportCsvButton rows={stats.recentPayments} columns={paymentColumns} filename="recent-payments" />
-                  <Link href="/billing/payments" className="inline-flex h-9 items-center gap-1 rounded-lg px-2.5 text-sm font-medium text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-500/10">
+                  <Link href="/billing/payments" className="inline-flex h-9 items-center gap-1 rounded-full px-3 text-sm font-medium text-brand-600 transition-colors hover:bg-brand-500/10">
                     View all <ArrowRight className="size-3.5" />
                   </Link>
                 </>

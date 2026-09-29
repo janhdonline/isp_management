@@ -82,7 +82,7 @@ export function Sidebar({
             collapsed && "lg:justify-center lg:px-2"
           )}
         >
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">
+          <span className="neu-gradient flex size-8 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white shadow-[3px_3px_8px_rgba(0,0,0,0.35)]">
             N
           </span>
           {!collapsed ? (
@@ -143,9 +143,9 @@ export function Sidebar({
               <div key={item.href}>
                 <div
                   className={cn(
-                    "group flex items-center rounded-lg transition-colors",
+                    "group flex items-center rounded-xl transition-all",
                     active
-                      ? "bg-brand-600 text-white shadow-sm"
+                      ? "neu-gradient text-white shadow-[3px_3px_10px_rgba(0,0,0,0.35)]"
                       : isUnder
                         ? "text-sidebar-active"
                         : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-active"
@@ -199,9 +199,9 @@ export function Sidebar({
                           href={child.href}
                           onClick={onCloseMobile}
                           className={cn(
-                            "block truncate rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
+                            "block truncate rounded-lg px-2.5 py-1.5 text-[13px] transition-all",
                             childActive
-                              ? "bg-brand-600 font-medium text-white shadow-sm"
+                              ? "neu-gradient font-medium text-white"
                               : "text-sidebar-fg/75 hover:bg-sidebar-hover hover:text-sidebar-active"
                           )}
                         >

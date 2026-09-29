@@ -322,6 +322,13 @@ model Payment {
   discount      Float    @default(0)
   method        String // Cash | bKash | Nagad | Bank | Card | Online
   transactionId String?
+  /// Which aggregator settled this, when it came in through one.
+  gatewayProvider String?
+  /// The gateway's own transaction id. Unique, and the idempotency key for the
+  /// callback: a provider that delivers the same notification twice must not
+  /// produce two payments.
+  gatewayTxnId  String?   @unique
+  gatewayStatus String?
   accountId     String
   account       Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
   collectedById String?
@@ -339,6 +346,7 @@ model Payment {
   @@index([accountId])
   @@index([method])
   @@index([paymentDate])
+  @@index([gatewayTxnId])
 }
 
 model Receipt {

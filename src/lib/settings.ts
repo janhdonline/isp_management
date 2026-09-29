@@ -116,6 +116,9 @@ export const DEFAULT_SETTINGS: {
   { key: "api.emailSmtpPass", value: "", group: "API", isSecret: true },
   { key: "api.emailSmtpSecure", value: "true", group: "API" },
   { key: "api.whatsappUrl", value: "", group: "API" }, // WhatsApp phone number id
+  { key: "api.sslcommerzStoreId", value: "", group: "API" },
+  { key: "api.sslcommerzStorePassword", value: "", group: "API", isSecret: true },
+  { key: "api.sslcommerzSandbox", value: "true", group: "API" },
   { key: "api.whatsappToken", value: "", group: "API", isSecret: true },
 
   // Backup

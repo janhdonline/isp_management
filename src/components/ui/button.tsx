@@ -4,17 +4,17 @@ import { Loader2 } from "lucide-react";
 import * as React from "react";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface)] disabled:pointer-events-none disabled:opacity-50 [&_svg]:shrink-0",
+  "neu-press inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface)] disabled:pointer-events-none disabled:opacity-50 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        primary: "bg-brand-600 text-white hover:bg-brand-700 shadow-sm",
-        secondary: "bg-[var(--surface-3)] text-[var(--fg)] hover:bg-[var(--border)]",
-        outline: "border border-[var(--border-strong)] bg-[var(--surface)] text-[var(--fg)] hover:bg-[var(--surface-3)]",
+        primary: "neu-gradient text-white shadow-[4px_4px_10px_var(--neu-dark),-4px_-4px_10px_var(--neu-light)] hover:brightness-105",
+        secondary: "neu-sm bg-[var(--neu-bg)] text-[var(--fg)]",
+        outline: "neu-inset text-[var(--fg)]",
         ghost: "text-[var(--fg-muted)] hover:bg-[var(--surface-3)] hover:text-[var(--fg)]",
-        danger: "bg-red-600 text-white hover:bg-red-700 shadow-sm",
+        danger: "bg-gradient-to-br from-rose-400 to-red-500 text-white shadow-[4px_4px_10px_var(--neu-dark),-4px_-4px_10px_var(--neu-light)] hover:brightness-105",
         "danger-outline": "border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950",
-        success: "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm",
+        success: "bg-gradient-to-br from-emerald-400 to-emerald-600 text-white shadow-[4px_4px_10px_var(--neu-dark),-4px_-4px_10px_var(--neu-light)] hover:brightness-105",
         link: "text-brand-600 underline-offset-4 hover:underline",
       },
       size: {

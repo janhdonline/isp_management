@@ -51,7 +51,7 @@ export function DropdownMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         className={cn(
-          "flex size-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--fg)]",
+          "neu-sm neu-press flex size-8 items-center justify-center rounded-full text-fg-muted hover:text-[var(--fg)]",
           buttonClassName
         )}
       >

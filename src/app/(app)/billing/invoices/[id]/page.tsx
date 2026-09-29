@@ -10,6 +10,7 @@ import { StatCard, StatCardGrid } from "@/components/ui/stat-card";
 import { InvoicePaymentForm } from "@/components/billing/billing-forms";
 import { InvoicePaymentsTable } from "@/components/billing/invoice-payments-table";
 import { AutoRenewButton } from "@/components/billing/invoice-widgets";
+import { PayOnlineButton } from "@/components/billing/pay-online-button";
 import { formatCurrency, formatDate, round2 } from "@/lib/utils";
 import { Banknote, CalendarDays, FileText, PackageIcon, User, Wallet } from "lucide-react";
 
@@ -66,6 +67,16 @@ export default async function InvoiceDetailPage({
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={invoice.status} />
             <AutoRenewButton customerId={invoice.customerId} />
+            {/* Only offered while there is something to pay, and only when a
+                gateway is actually configured — a button that leads nowhere is
+                worse than no button. */}
+            {balance > 0 ? (
+              <PayOnlineButton
+                invoiceId={invoice.id}
+                provider={settings["api.sslcommerzStoreId"] ? "SSLCommerz" : null}
+                sandbox={settings["api.sslcommerzSandbox"] === "true"}
+              />
+            ) : null}
             <a
               href={`/billing/invoices/${invoice.id}?print=1`}
               target="_blank"

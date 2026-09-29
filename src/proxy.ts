@@ -15,11 +15,15 @@ const PUBLIC_PATHS = [
 ];
 
 /**
- * Called by a scheduler rather than a browser, so it carries no session cookie
- * and authenticates with a bearer token instead. The route re-checks the token
- * itself and stays disabled when CRON_SECRET is unset.
+ * Called by a third party rather than a browser, so it carries no session cookie.
+ *
+ * Both authenticate themselves, in their own way: the cron route with
+ * `CRON_SECRET`, the gateway webhook by asking the provider's validation API what
+ * it thinks happened. Neither can be session-gated — a payment provider has no
+ * account here, and putting a staff session check in front of a callback means
+ * every online payment is rejected and the failure looks like a provider outage.
  */
-const TOKEN_PATHS = ["/api/cron"];
+const TOKEN_PATHS = ["/api/cron", "/api/webhooks"];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

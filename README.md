@@ -62,7 +62,7 @@ npm run dev           # dev server
 npm run build         # production build
 npm run start         # serve the production build
 npm run lint          # eslint
-npm test              # 65 unit tests: enforcement, RouterOS, refunds, shifts, reset, PDF, rate limit
+npm test              # 75 unit tests: enforcement, gateway, RouterOS, refunds, shifts, reset, PDF, rate limit
 npm run setup         # prisma migrate deploy + seed
 npm run prisma:seed   # reset + reseed demo data
 npm run db:reset      # drop and recreate the database
@@ -247,6 +247,38 @@ never check again:
   "network": { "applied": false, "queued": true, "detail": "Edge-Mirpur has no API credentials…" }
 }
 ```
+
+---
+
+## Online payments
+
+bKash, Nagad, Rocket and cards go through one aggregator — SSLCommerz by
+default, behind a `PaymentGateway` interface so ShurjoPay or anything else is one
+file. `PAYMENT_METHODS` always listed those names, but they were labels on a
+dropdown until now: every online payment had to be typed in by hand after the
+customer handed over cash, which is both slow and the largest source of
+collection error in a Bangladeshi ISP.
+
+**The webhook is the security boundary.** A callback is an untrusted claim from
+the internet saying "I was paid", and it gets three defences:
+
+- **The posted body only decides what to ask about.** The amount recorded is the
+  one the gateway's own validation API returns, so tampering with the posted
+  `amount` changes nothing.
+- **The amount is re-checked against our own invoice.** A gateway reporting more
+  than the balance is refused with a 409 — a business partner is not an authority
+  on what a customer owes.
+- **The gateway transaction id is uniquely indexed.** Providers retry; a duplicate
+  delivery is one payment. The index means even two simultaneous deliveries are
+  caught by the database rather than by hope.
+
+A failed or cancelled transaction is answered with 200 so the provider stops
+delivering, and records nothing. A genuine recording failure is a 5xx, because a
+provider told 200 will not retry — and an invoice a customer believes they paid
+is the worst outcome available here.
+
+Configure the provider to POST to `https://your-host/api/webhooks/sslcommerz`,
+and set `app.url` so the return and cancel links point at the real deployment.
 
 ---
 

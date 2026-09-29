@@ -21,6 +21,9 @@ const FIELDS: SettingField[] = [
   { key: "api.emailSmtpPass", label: "SMTP Password", type: "password" },
   { key: "api.emailSmtpSecure", label: "Use TLS", type: "boolean" },
   { key: "api.whatsappUrl", label: "WhatsApp Phone Number ID", hint: "The numeric id from Meta, not a full URL" },
+  { key: "api.sslcommerzStoreId", label: "SSLCommerz Store ID", hint: "Covers bKash, Nagad, Rocket and cards" },
+  { key: "api.sslcommerzStorePassword", label: "SSLCommerz Store Password" },
+  { key: "api.sslcommerzSandbox", label: "Use sandbox", hint: "On for testing. Turn off only when you are taking real money." },
   { key: "api.whatsappToken", label: "WhatsApp Token", type: "password" },
 ];
 

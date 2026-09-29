@@ -5,7 +5,7 @@ export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElemen
   return (
     <div
       className={cn(
-        "rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] shadow-xs",
+        "neu rounded-[var(--radius-card)]",
         className
       )}
       {...props}
@@ -29,7 +29,7 @@ export function CardHeader({
   return (
     <div
       className={cn(
-        "flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5",
+        "flex flex-wrap items-center justify-between gap-3 px-5 py-4 sm:px-6",
         className
       )}
       {...props}
@@ -55,14 +55,14 @@ export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHead
 }
 
 export function CardBody({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("p-4 sm:p-5", className)} {...props} />;
+  return <div className={cn("p-5 sm:p-6", className)} {...props} />;
 }
 
 export function CardFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
-        "flex items-center justify-end gap-2 border-t border-[var(--border)] px-4 py-3 sm:px-5",
+        "flex items-center justify-end gap-2 px-5 py-4 sm:px-6",
         className
       )}
       {...props}

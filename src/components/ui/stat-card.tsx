@@ -29,19 +29,19 @@ const TONES = {
 
 function StatCardBody({ label, value, icon: Icon, delta, deltaLabel, hint, tone, loading, className }: StatCardProps) {
   return (
-    <Card className={cn("group relative overflow-hidden p-4 transition-shadow hover:shadow-md", className)}>
+    <Card className={cn("group relative overflow-hidden p-5 transition-transform duration-200 hover:-translate-y-0.5", className)}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-xs font-medium text-fg-muted">{label}</p>
           {loading ? (
             <Skeleton className="mt-2 h-7 w-24" />
           ) : (
-            <p className="tnum mt-1.5 text-2xl font-semibold tracking-tight text-[var(--fg)]">{value}</p>
+            <p className="tnum mt-1.5 text-[1.7rem] leading-8 font-semibold tracking-tight text-[var(--fg)]">{value}</p>
           )}
         </div>
         {Icon ? (
-          <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg", TONES[tone ?? "neutral"])}>
-            <Icon className="size-4.5" />
+          <span className={cn("flex size-11 shrink-0 items-center justify-center rounded-2xl shadow-[4px_4px_10px_var(--neu-dark),-4px_-4px_10px_var(--neu-light)]", TONES[tone ?? "neutral"])}>
+            <Icon className="size-5" />
           </span>
         ) : null}
       </div>
@@ -77,6 +77,6 @@ export function StatCard(props: StatCardProps) {
 
 export function StatCardGrid({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn("grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4", className)}>{children}</div>
+    <div className={cn("stagger-rise grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4", className)}>{children}</div>
   );
 }
