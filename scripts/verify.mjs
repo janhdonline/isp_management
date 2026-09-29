@@ -113,7 +113,9 @@ console.log("\npayment flow (ISP.md §21)");
 
   const after = await fetchCustomer(invoice.customer.id);
   const accountAfter = (await api("/api/accounts")).body.rows.find((a) => a.id === accountId).currentBalance;
-  const invoiceAfter = (await api(`/api/invoices?perPage=100`)).body.rows.find((i) => i.id === invoice.id);
+  // Read the invoice back by id: a paginated list is not a reliable way to
+  // find a specific row after it has just changed.
+  const invoiceAfter = (await api(`/api/invoice?id=${encodeURIComponent(invoice.id)}`)).body;
   const payments = (await api(`/api/payments?perPage=5&q=${res.body?.payment?.paymentId ?? ""}`)).body.rows;
 
   check("invoice marked paid", invoiceAfter?.status === "Paid", `status=${invoiceAfter?.status}`);

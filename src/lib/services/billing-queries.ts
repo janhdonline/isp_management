@@ -28,6 +28,19 @@ export type InvoiceRow = {
   status: string;
 };
 
+/** One invoice with its customer, package and any receipt, for a detail read. */
+export async function getInvoiceFull(id: string) {
+  return prisma.invoice.findUnique({
+    where: { id },
+    include: {
+      ...invoiceInclude,
+      createdBy: { select: { name: true } },
+      receipts: { orderBy: { issuedAt: "desc" } },
+      payments: { orderBy: { paymentDate: "desc" } },
+    },
+  });
+}
+
 export async function listInvoices(p: ListParams = {}): Promise<ListResult<InvoiceRow>> {
   const page = Math.max(1, p.page ?? 1);
   const perPage = p.perPage ?? DEFAULT_PER_PAGE;

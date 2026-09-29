@@ -1,5 +1,5 @@
 import "server-only";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 import { prisma } from "@/lib/prisma";
 import { type PermissionKey } from "@/lib/permissions";
@@ -38,13 +38,34 @@ export async function signToken(user: SessionUser) {
     .sign(secretKey());
 }
 
+/**
+ * Whether to mark the session cookie `Secure`.
+ *
+ * A `Secure` cookie is only stored when the browser is on HTTPS, so tying this
+ * to NODE_ENV breaks every local run of the production build: you sign in, the
+ * cookie is silently dropped, and each click bounces back to /login.
+ *
+ * So the flag follows the actual transport instead: secure when a proxy tells
+ * us the request arrived over HTTPS, and not secure otherwise. Set
+ * `SESSION_COOKIE_SECURE=true` when TLS terminates somewhere that does not send
+ * `x-forwarded-proto`.
+ */
+async function shouldUseSecureCookie(): Promise<boolean> {
+  const override = process.env.SESSION_COOKIE_SECURE?.toLowerCase();
+  if (override === "true") return true;
+  if (override === "false") return false;
+
+  const h = await headers();
+  return h.get("x-forwarded-proto")?.split(",")[0]?.trim() === "https";
+}
+
 export async function setSessionCookie(user: SessionUser) {
   const token = await signToken(user);
   const store = await cookies();
   store.set(COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: await shouldUseSecureCookie(),
     path: "/",
     maxAge: MAX_AGE,
   });

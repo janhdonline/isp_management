@@ -2,7 +2,7 @@ import { getSessionFromRequest, requirePermissionFromRequest } from "@/lib/auth"
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { getCustomerFull, listCustomers } from "@/lib/services/customers";
-import { listInvoices, listPayments } from "@/lib/services/billing-queries";
+import { getInvoiceFull, listInvoices, listPayments } from "@/lib/services/billing-queries";
 import { getAllPackages } from "@/lib/services/packages";
 import { getDashboardStats } from "@/lib/services/dashboard";
 import { listAccounts } from "@/lib/services/accounts";
@@ -21,8 +21,9 @@ type Query = Parameters<typeof listCustomers>[0] & { id?: string };
 
 const ROUTES: Record<string, (q: Query) => unknown> = {
   customers: (q) => listCustomers(q),
-  /** Single record read, for clients that already know the id. */
+  /** Single record reads, for clients that already know the id. */
   customer: (q) => (q.id ? getCustomerFull(q.id) : Promise.resolve(null)),
+  invoice: (q) => (q.id ? getInvoiceFull(q.id) : Promise.resolve(null)),
   invoices: (q) => listInvoices(q),
   payments: (q) => listPayments(q),
   packages: () => getAllPackages(),
