@@ -16,7 +16,7 @@
     "setup": "prisma migrate deploy && npm run prisma:seed",
     "migrate:from:sqlite": "tsx scripts/transfer-sqlite-to-postgres.ts ./dev.db",
     "verify": "node scripts/verify.mjs",
-    "test": "node --test tests/"
+    "test": "tsx --test tests/"
   },
   "dependencies": {
     "@prisma/adapter-better-sqlite3": "^7.10.0",

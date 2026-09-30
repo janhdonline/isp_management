@@ -153,6 +153,99 @@ export async function enforceRemoveSecret(
 }
 
 /**
+ * Removes a secret for a subscriber whose customer record is already gone.
+ *
+ * This exists because of an ordering trap. `deleteCustomerAction` deletes the
+ * row and *then* tries to tell the router, so by the time the router is asked
+ * the customer no longer exists — and a path that looks the customer up to find
+ * the router can never work after the row it needs has been deleted. The result
+ * was a live PPPoE secret for a departed customer: free service, invisible in
+ * the system, and discovered by nobody until somebody tried to use that address.
+ *
+ * So the username and router are carried instead of looked up, and the queue row
+ * holds them too — a removal has to survive the record it refers to, because
+ * the whole point is that the record is not there any more.
+ */
+export async function enforceRemoveSecretByUsername(
+  username: string,
+  routerId: string | null,
+  userId?: string
+): Promise<EnforcementResult> {
+  if (!username) {
+    return { ok: false, detail: "No username was given, so the router was not told." };
+  }
+  if (!routerId) {
+    return {
+      ok: true,
+      skipped: true,
+      detail: `No router was on file for ${username}, so there was no secret to remove.`,
+    };
+  }
+
+  const router = await prisma.router.findUnique({
+    where: { id: routerId },
+    select: {
+      id: true,
+      name: true,
+      ipAddress: true,
+      apiPort: true,
+      apiUser: true,
+      apiSecretEnc: true,
+      useSsl: true,
+      sessionSource: true,
+    },
+  });
+
+  if (!router) {
+    return {
+      ok: false,
+      detail: `The router for ${username} no longer exists, so its secret cannot be removed.`,
+    };
+  }
+
+  // Queued before the attempt, for the same reason as every other action: a
+  // crash mid-call must not lose the removal. `customerId` is null on purpose —
+  // there is no customer to point at any more, and the username is the whole
+  // identity the router knows this subscriber by.
+  const row = await prisma.networkAction.create({
+    data: { customerId: null, routerId: router.id, username, action: "removeSecret", status: "Pending" },
+  });
+
+  let adapter: NetworkAdapter;
+  try {
+    adapter = await adapterForRouterRow(router);
+  } catch (e) {
+    return resolve(row.id, "Retry", describe(e), { name: username, username }, "removeSecret", userId);
+  }
+
+  if (!adapter.live) {
+    return resolve(
+      row.id,
+      "Retry",
+      `${router.name} has no API credentials, so the secret for ${username} was not removed. Add the API user in Network → Routers.`,
+      { name: username, username },
+      "removeSecret",
+      userId
+    );
+  }
+
+  try {
+    await adapter.removeSecret(username);
+  } catch (e) {
+    return resolve(row.id, "Retry", describe(e), { name: username, username }, "removeSecret", userId);
+  }
+
+  return resolve(
+    row.id,
+    "Done",
+    `Removed the secret for ${username} on ${router.name}.`,
+    { name: username, username },
+    "removeSecret",
+    userId
+  );
+}
+
+/**
  * Reconnects a suspended customer once their dues are cleared.
  *
  * Called after every payment. The rule is deliberately narrow: the customer must
@@ -433,7 +526,8 @@ async function resolve(
   actionId: string,
   outcome: "Done" | "Retry",
   detail: string,
-  customer: { id: string; name: string; username: string },
+  /** `id` is absent for a removal queued after the customer row was deleted. */
+  customer: { id?: string; name: string; username: string },
   action: NetworkActionType,
   userId: string | undefined,
   extra: { queued?: boolean } = {}
@@ -511,6 +605,18 @@ export async function retryPendingNetworkActions(max = 50): Promise<{
       : null;
 
     if (!customer) {
+      // A `removeSecret` action legitimately has no customer: it exists to clean
+      // up a router *after* the customer record is gone. Writing it off here
+      // would guarantee the secret survives — which is the exact free line this
+      // phase is meant to close. The row carries the username and the router, so
+      // the work can still be done.
+      if (row.action === "removeSecret") {
+        const result = await retryOrphanedRemoval(row);
+        if (result.ok) stats.done += 1;
+        else stats.failed += 1;
+        continue;
+      }
+
       await prisma.networkAction.update({
         where: { id: row.id },
         data: { status: "Failed", lastError: "The customer no longer exists" },
@@ -568,6 +674,78 @@ export async function retryPendingNetworkActions(max = 50): Promise<{
   stats.givenUp = expired.count;
 
   return stats;
+}
+
+/**
+ * Carries out a queued secret removal for a customer who no longer exists.
+ *
+ * Reuses its own row rather than creating a new one, for the same reason every
+ * retry does: a fresh row per attempt would leave the original Pending forever
+ * and grow the queue by one per cycle.
+ */
+async function retryOrphanedRemoval(row: {
+  id: string;
+  username: string;
+  routerId: string | null;
+}): Promise<{ ok: boolean }> {
+  const router = row.routerId
+    ? await prisma.router.findUnique({
+        where: { id: row.routerId },
+        select: {
+          id: true,
+          name: true,
+          ipAddress: true,
+          apiPort: true,
+          apiUser: true,
+          apiSecretEnc: true,
+          useSsl: true,
+          sessionSource: true,
+        },
+      })
+    : null;
+
+  if (!router) {
+    await prisma.networkAction.update({
+      where: { id: row.id },
+      data: { status: "Failed", lastError: "The router this secret was on no longer exists" },
+    });
+    return { ok: false };
+  }
+
+  const target = { name: row.username, username: row.username };
+
+  let adapter: NetworkAdapter;
+  try {
+    adapter = await adapterForRouterRow(router);
+  } catch (e) {
+    return resolve(row.id, "Retry", describe(e), target, "removeSecret", undefined);
+  }
+
+  if (!adapter.live) {
+    return resolve(
+      row.id,
+      "Retry",
+      `${router.name} has no API credentials, so the secret for ${row.username} was not removed.`,
+      target,
+      "removeSecret",
+      undefined
+    );
+  }
+
+  try {
+    await adapter.removeSecret(row.username);
+  } catch (e) {
+    return resolve(row.id, "Retry", describe(e), target, "removeSecret", undefined);
+  }
+
+  return resolve(
+    row.id,
+    "Done",
+    `Removed the secret for ${row.username} on ${router.name}.`,
+    target,
+    "removeSecret",
+    undefined
+  );
 }
 
 /** Minutes to wait after the Nth failure: 1, 5, 15, 30, then hourly. */

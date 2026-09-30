@@ -14,7 +14,7 @@ import { syncCustomerBilling } from "@/lib/services/billing";
 import {
   enforceProvision,
   enforceReconnect,
-  enforceRemoveSecret,
+  enforceRemoveSecretByUsername,
   enforceSetProfile,
   enforceSuspend,
 } from "@/lib/services/network-enforcement";
@@ -435,7 +435,15 @@ export async function deleteCustomerAction(id: string): Promise<FormState> {
     // live one is a working line someone is still using for free.
     let note = "";
     if (customer?.username) {
-      const removed = await enforceRemoveSecret(id, session.id);
+      // The username-based path, not the customer-id one. The row is gone by
+      // now, so anything that looks the customer up to find the router finds
+      // nothing — which meant the secret was never removed and a departed
+      // subscriber kept a working line for free.
+      const removed = await enforceRemoveSecretByUsername(
+        customer.username,
+        customer.routerId,
+        session.id
+      );
       if (!removed.ok) {
         note = ` The router was not reached (${removed.detail}) — that secret should be removed by hand.`;
       }

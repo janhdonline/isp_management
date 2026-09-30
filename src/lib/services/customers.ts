@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { returnEquipment } from "@/lib/services/inventory";
 import { Prisma } from "@/generated/prisma/client";
 import { DEFAULT_PER_PAGE, ListParams, ListResult } from "@/lib/query";
 import { addDays, round2, startOfDay } from "@/lib/utils";
@@ -517,13 +518,45 @@ export async function renewCustomer(
 
 export async function deleteCustomer(id: string, userId?: string) {
   const c = await prisma.customer.findUniqueOrThrow({ where: { id } });
+
+  // Equipment is taken back *before* the row goes, not after.
+  //
+  // `CustomerEquipment.customer` cascades, so deleting the customer would
+  // silently delete the assignment rows with it — and with them the only record
+  // that the ONU ever left the storeroom. The device would sit in a customer's
+  // house with no trace in the system and no way back onto the shelf. That is
+  // the exact failure the equipment trail exists to prevent, so the return runs
+  // first, through the ordinary service, which is what puts the stock back and
+  // writes the movement that explains it.
+  const assigned = await prisma.customerEquipment.findMany({
+    where: { customerId: id, status: "Assigned" },
+    select: { id: true, serial: true, item: { select: { name: true, sku: true } } },
+  });
+
+  for (const row of assigned) {
+    await returnEquipment({
+      equipmentId: row.id,
+      status: "Returned",
+      // The device came back because the subscription ended, not because the
+      // customer said so — worth recording, since it is the one case where the
+      // return reason is the same for every device.
+      note: "Returned on customer deletion",
+      userId,
+    });
+  }
+
   await prisma.customer.delete({ where: { id } });
+
   await logActivity(
     {
       action: "Delete",
       entity: "Customer",
       entityId: id,
-      summary: `Deleted customer ${c.name} (${c.username})`,
+      summary:
+        `Deleted customer ${c.name} (${c.username})` +
+        (assigned.length
+          ? `; returned ${assigned.length} device(s) to stock (${assigned.map((a) => a.serial).join(", ")})`
+          : ""),
     },
     userId
   );
