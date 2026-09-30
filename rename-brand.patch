@@ -1,0 +1,82 @@
+diff --git a/src/app/(app)/support/actions.ts b/src/app/(app)/support/actions.ts
+index 6a1e666..7dacd4c 100644
+--- a/src/app/(app)/support/actions.ts
++++ b/src/app/(app)/support/actions.ts
+@@ -444,7 +444,7 @@ export const SMS_TEMPLATES = [
+   { key: "due-reminder", label: "Due Reminder", body: "Dear {name}, you have an outstanding balance of {amount}. Please pay at your earliest convenience." },
+   { key: "payment-receipt", label: "Payment Receipt", body: "Dear {name}, we received your payment of {amount}. Thank you." },
+   { key: "suspended", label: "Suspension Notice", body: "Dear {name}, your service has been suspended due to an unpaid balance of {amount}." },
+-  { key: "welcome", label: "Welcome", body: "Dear {name}, welcome to NetLink Broadband. Your username is {username}." },
++  { key: "welcome", label: "Welcome", body: "Dear {name}, welcome to Easy Network Solution. Your username is {username}." },
+ ];
+ 
+ const sendSchema = z.object({
+diff --git a/src/app/(auth)/login/login-form.tsx b/src/app/(auth)/login/login-form.tsx
+index a8a557a..b36edd1 100644
+--- a/src/app/(auth)/login/login-form.tsx
++++ b/src/app/(auth)/login/login-form.tsx
+@@ -89,11 +89,11 @@ export function LoginAside() {
+       <div className="relative">
+         <div className="flex items-center gap-2.5">
+           <span className="flex size-9 items-center justify-center rounded-lg bg-brand-600 text-base font-bold text-white">
+-            N
++            E
+           </span>
+           <div>
+-            <p className="text-sm font-semibold text-sidebar-active">NetLink Broadband</p>
+-            <p className="text-[11px] uppercase tracking-wider opacity-60">ISP Management System</p>
++            <p className="text-sm font-semibold text-sidebar-active">Easy Network Solution</p>
++            <p className="text-[11px] uppercase tracking-wider opacity-60">Internet Provider</p>
+           </div>
+         </div>
+ 
+diff --git a/src/app/manifest.ts b/src/app/manifest.ts
+index fc20e3c..4f30e4d 100644
+--- a/src/app/manifest.ts
++++ b/src/app/manifest.ts
+@@ -11,8 +11,8 @@ export const dynamic = "force-static";
+  */
+ export default function manifest(): MetadataRoute.Manifest {
+   return {
+-    name: "NetLink ISP Manager",
+-    short_name: "ISP Manager",
++    name: "Easy Network Solution",
++    short_name: "Internet Provider",
+     description:
+       "Customers, billing, network and support for an internet service provider.",
+     start_url: "/dashboard",
+diff --git a/src/components/layout/sidebar.tsx b/src/components/layout/sidebar.tsx
+index 96d0b4b..b193f76 100644
+--- a/src/components/layout/sidebar.tsx
++++ b/src/components/layout/sidebar.tsx
+@@ -91,12 +91,12 @@ export function Sidebar({
+           )}
+         >
+           <span className="flex size-9 shrink-0 items-center justify-center rounded-2xl bg-gold-500 text-base font-bold text-pine-950 shadow-sm">
+-            N
++            E
+           </span>
+           {!collapsed ? (
+             <div className="min-w-0 flex-1">
+-              <p className="truncate text-sm font-semibold text-sidebar-active">NetLink</p>
+-              <p className="truncate text-[10px] uppercase tracking-wider text-sidebar-fg/60">ISP Manager</p>
++              <p className="truncate text-sm font-semibold text-sidebar-active">Easy Network Solution</p>
++              <p className="truncate text-[10px] uppercase tracking-wider text-sidebar-fg/60">Internet Provider</p>
+             </div>
+           ) : null}
+ 
+diff --git a/src/lib/settings.ts b/src/lib/settings.ts
+index 232fe3f..8a16b47 100644
+--- a/src/lib/settings.ts
++++ b/src/lib/settings.ts
+@@ -51,8 +51,8 @@ export const DEFAULT_SETTINGS: {
+   isSecret?: boolean;
+ }[] = [
+   // General
+-  { key: "company.name", value: "NetLink Broadband", group: "General" },
+-  { key: "company.tagline", value: "ISP Management System", group: "General" },
++  { key: "company.name", value: "Easy Network Solution", group: "General" },
++  { key: "company.tagline", value: "Internet Provider", group: "General" },
+   { key: "company.address", value: "123 Main Road, Dhaka 1200", group: "General" },
+   { key: "company.phone", value: "+880 1712 345678", group: "General" },
+   { key: "company.email", value: "support@netlink.com.bd", group: "General" },

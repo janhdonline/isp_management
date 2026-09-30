@@ -91,12 +91,12 @@ export function Sidebar({
           )}
         >
           <span className="flex size-9 shrink-0 items-center justify-center rounded-2xl bg-gold-500 text-base font-bold text-pine-950 shadow-sm">
-            N
+            E
           </span>
           {!collapsed ? (
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-sidebar-active">NetLink</p>
-              <p className="truncate text-[10px] uppercase tracking-wider text-sidebar-fg/60">ISP Manager</p>
+              <p className="truncate text-sm font-semibold text-sidebar-active">Easy Network Solution</p>
+              <p className="truncate text-[10px] uppercase tracking-wider text-sidebar-fg/60">Internet Provider</p>
             </div>
           ) : null}
 

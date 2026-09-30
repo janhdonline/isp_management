@@ -51,8 +51,8 @@ export const DEFAULT_SETTINGS: {
   isSecret?: boolean;
 }[] = [
   // General
-  { key: "company.name", value: "NetLink Broadband", group: "General" },
-  { key: "company.tagline", value: "ISP Management System", group: "General" },
+  { key: "company.name", value: "Easy Network Solution", group: "General" },
+  { key: "company.tagline", value: "Internet Provider", group: "General" },
   { key: "company.address", value: "123 Main Road, Dhaka 1200", group: "General" },
   { key: "company.phone", value: "+880 1712 345678", group: "General" },
   { key: "company.email", value: "support@netlink.com.bd", group: "General" },

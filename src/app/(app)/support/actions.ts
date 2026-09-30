@@ -444,7 +444,7 @@ export const SMS_TEMPLATES = [
   { key: "due-reminder", label: "Due Reminder", body: "Dear {name}, you have an outstanding balance of {amount}. Please pay at your earliest convenience." },
   { key: "payment-receipt", label: "Payment Receipt", body: "Dear {name}, we received your payment of {amount}. Thank you." },
   { key: "suspended", label: "Suspension Notice", body: "Dear {name}, your service has been suspended due to an unpaid balance of {amount}." },
-  { key: "welcome", label: "Welcome", body: "Dear {name}, welcome to NetLink Broadband. Your username is {username}." },
+  { key: "welcome", label: "Welcome", body: "Dear {name}, welcome to Easy Network Solution. Your username is {username}." },
 ];
 
 const sendSchema = z.object({

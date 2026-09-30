@@ -11,8 +11,8 @@ export const dynamic = "force-static";
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "NetLink ISP Manager",
-    short_name: "ISP Manager",
+    name: "Easy Network Solution",
+    short_name: "Internet Provider",
     description:
       "Customers, billing, network and support for an internet service provider.",
     start_url: "/dashboard",

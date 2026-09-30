@@ -89,11 +89,11 @@ export function LoginAside() {
       <div className="relative">
         <div className="flex items-center gap-2.5">
           <span className="flex size-9 items-center justify-center rounded-lg bg-brand-600 text-base font-bold text-white">
-            N
+            E
           </span>
           <div>
-            <p className="text-sm font-semibold text-sidebar-active">NetLink Broadband</p>
-            <p className="text-[11px] uppercase tracking-wider opacity-60">ISP Management System</p>
+            <p className="text-sm font-semibold text-sidebar-active">Easy Network Solution</p>
+            <p className="text-[11px] uppercase tracking-wider opacity-60">Internet Provider</p>
           </div>
         </div>
 
