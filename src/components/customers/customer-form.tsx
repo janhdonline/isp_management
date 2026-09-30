@@ -26,6 +26,7 @@ export type CustomerFormDefaults = {
   gender?: string;
   address?: string;
   areaId?: string;
+  resellerId?: string | null;
   customerType?: string;
   photoUrl?: string;
   username?: string;
@@ -95,6 +96,7 @@ function SubmitButtons({ isEdit }: { isEdit: boolean }) {
  */
 export function CustomerForm({
   areas,
+  resellers,
   packages,
   routers,
   olts,
@@ -103,6 +105,8 @@ export function CustomerForm({
   action,
 }: {
   areas: (Option & { zone?: string | null })[];
+  /** Optional: a customer with no reseller is the common case. */
+  resellers?: Option[];
   packages: (Option & { price: number; fee: number; speed: string })[];
   routers: Option[];
   olts: Option[];
@@ -195,6 +199,18 @@ export function CustomerForm({
             </Field>
             <Field label="Customer Type">
               <Select name="customerType" defaultValue={defaults.customerType ?? "Home"} options={CUSTOMER_TYPES.map((c) => ({ value: c, label: c }))} />
+            </Field>
+            <Field
+              label="Reseller"
+              error={setField("resellerId")}
+              hint="Optional. Who collects this customer's cash in the zone."
+            >
+              <Select
+                name="resellerId"
+                defaultValue={defaults.resellerId ?? ""}
+                placeholder="Collected at the office"
+                options={(resellers ?? []).map((r) => ({ value: r.id, label: r.name }))}
+              />
             </Field>
             <Field label="Photo URL" hint="Optional link to a customer photo">
               <Input name="photoUrl" defaultValue={defaults.photoUrl} placeholder="https://..." />

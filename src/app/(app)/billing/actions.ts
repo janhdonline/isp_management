@@ -150,6 +150,7 @@ export async function collectPaymentAction(
         paymentDate: d.paymentDate,
         note: d.note,
         collectedById: session.id,
+        collectedByResellerId: d.collectedByResellerId ?? null,
       });
 
       const receipt = await tx.receipt.findFirstOrThrow({
@@ -246,6 +247,7 @@ export async function receivePaymentAction(
         paymentDate: d.paymentDate,
         note: d.note,
         collectedById: session.id,
+        collectedByResellerId: d.collectedByResellerId ?? null,
       });
       const receipt = await tx.receipt.findFirstOrThrow({ where: { paymentId: payment.id } });
       await prismaLog(

@@ -13,12 +13,17 @@ export const metadata: Metadata = { title: "Edit Customer" };
 
 export default async function EditCustomerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [customer, areas, packages, routers, olts] = await Promise.all([
+  const [customer, areas, packages, routers, olts, resellers] = await Promise.all([
     prisma.customer.findUnique({ where: { id } }),
     getAreasSimple(),
     getAllPackages(),
     listRouters(),
     listOlts(),
+    prisma.reseller.findMany({
+      where: { status: "Active" },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
   ]);
 
   if (!customer) notFound();
@@ -38,6 +43,7 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
       <PageContainer className="max-w-6xl">
         <CustomerForm
           areas={areas.map((a) => ({ id: a.id, name: a.name, zone: a.zone?.name ?? null }))}
+          resellers={resellers}
           packages={packages.map((p) => ({
             id: p.id,
             name: p.name,

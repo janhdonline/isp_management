@@ -1,0 +1,149 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { prisma } from "@/lib/prisma";
+import { requirePortalCustomer } from "@/lib/portal-auth";
+import { syncCustomerBilling } from "@/lib/services/billing";
+import { customerCycleUsage } from "@/lib/services/fup";
+import { formatCurrency, formatDate } from "@/lib/utils";
+import { PortalShell } from "./portal-shell";
+
+export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "Your account" };
+
+export default async function PortalOverviewPage() {
+  const session = await requirePortalCustomer();
+
+  const customer = await prisma.customer.findUnique({
+    where: { id: session.customerId },
+    select: {
+      id: true,
+      name: true,
+      customerCode: true,
+      username: true,
+      connectionStatus: true,
+      onlineStatus: true,
+      billingStatus: true,
+      monthlyBill: true,
+      expiryDate: true,
+      fupThrottled: true,
+      fupThrottledAt: true,
+      previousDue: true,
+      package: {
+        select: {
+          name: true,
+          downloadSpeed: true,
+          uploadSpeed: true,
+          fupLimit: true,
+          mikrotikProfile: true,
+        },
+      },
+    },
+  });
+  if (!customer) return <PortalShell title="Account unavailable" />;
+
+  // The same recompute the staff screen uses, so the amount a customer sees is
+  // the amount they are actually billed — not a second formula that drifts.
+  const billing = await syncCustomerBilling(customer.id);
+  const usage = await customerCycleUsage(customer.id);
+
+  const due = billing.due;
+  const overdue = billing.billingStatus === "Overdue";
+
+  return (
+    <PortalShell title="Your account" subtitle={`${customer.package?.name ?? "No package"} · ${customer.username}`}>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="portal-metric">
+          <p className="portal-metric__label">Total due</p>
+          <p
+            className="portal-metric__value tnum"
+            style={overdue ? { color: "#b91c1c" } : undefined}
+          >
+            {formatCurrency(due)}
+          </p>
+          <p className="mt-0.5 text-xs text-fg-subtle">
+            {due <= 0 ? "Nothing outstanding" : billing.billingStatus}
+          </p>
+        </div>
+
+        <div className="portal-metric">
+          <p className="portal-metric__label">Monthly bill</p>
+          <p className="portal-metric__value tnum">{formatCurrency(customer.monthlyBill)}</p>
+          <p className="mt-0.5 text-xs text-fg-subtle">
+            {customer.package ? `${customer.package.downloadSpeed} Mbps down / ${customer.package.uploadSpeed} Mbps up` : "No package"}
+          </p>
+        </div>
+
+        <div className="portal-metric">
+          <p className="portal-metric__label">Valid until</p>
+          <p className="portal-metric__value">
+            {customer.expiryDate ? formatDate(customer.expiryDate) : "—"}
+          </p>
+          <p className="mt-0.5 text-xs text-fg-subtle">
+            <span
+              className={`portal-badge ${customer.connectionStatus === "Active" ? "portal-badge--ok" : "portal-badge--bad"}`}
+            >
+              {customer.connectionStatus}
+            </span>
+          </p>
+        </div>
+      </div>
+
+      {customer.fupThrottled ? (
+        <div className="portal-card mt-4" style={{ borderColor: "var(--gold-400, #c99b3f)" }}>
+          <p className="portal-card__title">Your speed is currently reduced</p>
+          <p className="portal-card__hint">
+            You have used the data included with your package this cycle, so your speed has been
+            reduced until your next billing cycle begins
+            {customer.fupThrottledAt
+              ? ` (since ${formatDate(customer.fupThrottledAt)})`
+              : ""}
+            . Please see the invoices page for the current figures.
+          </p>
+        </div>
+      ) : null}
+
+      {usage.limitGb !== null && usage.limitGb > 0 ? (
+        <div className="portal-card mt-4">
+          <p className="portal-card__title">Data this cycle</p>
+          <p className="portal-card__hint">
+            {usage.gb >= 10 ? Math.round(usage.gb) : Math.round(usage.gb * 10) / 10} of{" "}
+            {usage.limitGb >= 10 ? Math.round(usage.limitGb) : Math.round(usage.limitGb * 10) / 10} GB
+            used
+            {usage.percent !== null ? ` (${Math.round(usage.percent)}%)` : ""}.
+          </p>
+          <div
+            className="mt-2 h-2 w-full overflow-hidden rounded-full"
+            style={{ background: "var(--surface-3, #f1f5f9)" }}
+            role="progressbar"
+            aria-valuenow={Math.min(100, Math.round(usage.percent ?? 0))}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div
+              className="h-full rounded-full"
+              style={{
+                width: `${Math.min(100, usage.percent ?? 0)}%`,
+                background: usage.exceeded ? "#dc2626" : "var(--brand-600, #ab7e2c)",
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      <div className="portal-card mt-4">
+        <p className="portal-card__title">Quick actions</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Link href="/portal/invoices" className="portal-btn portal-btn--ghost">
+            See my invoices
+          </Link>
+          <Link href="/portal/tickets" className="portal-btn portal-btn--ghost">
+            Raise a support request
+          </Link>
+          <Link href="/portal/password" className="portal-btn portal-btn--ghost">
+            Change my password
+          </Link>
+        </div>
+      </div>
+    </PortalShell>
+  );
+}

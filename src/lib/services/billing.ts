@@ -201,6 +201,8 @@ export async function recordPayment(
     paymentDate: Date;
     note?: string;
     collectedById?: string;
+    /** Set when a zone reseller took the cash; the commission report reads it. */
+    collectedByResellerId?: string | null;
   },
   activity?: ActivityInput
 ) {
@@ -225,6 +227,10 @@ export async function recordPayment(
       paymentDate: input.paymentDate,
       note: input.note,
       collectedById: input.collectedById,
+      // Recorded on the payment itself, not inferred later: this is the fact
+      // the commission report is derived from, and it only exists at the moment
+      // the cash is taken.
+      collectedByResellerId: input.collectedByResellerId ?? null,
     },
   });
 

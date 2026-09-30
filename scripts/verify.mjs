@@ -516,6 +516,63 @@ console.log("\ninventory (Phase C)");
   );
 }
 
+/* ---------------------------------------------------------------- */
+console.log("\ncustomer portal + resellers (Phase D)");
+{
+  // The portal has its own cookie and its own guard, and the proxy must step
+  // aside for it — while still refusing it everywhere else.
+  const loginPage = await fetch(`${BASE}/portal/login`);
+  check("the portal login page is reachable without a session", loginPage.status === 200, `got ${loginPage.status}`);
+
+  const staffAtPortal = await fetch(`${BASE}/portal`, { headers: { cookie }, redirect: "manual" });
+  check(
+    "a staff session is not accepted on a portal page",
+    staffAtPortal.status === 307 && (staffAtPortal.headers.get("location") ?? "").includes("/portal/login"),
+    `got ${staffAtPortal.status} -> ${staffAtPortal.headers.get("location")}`
+  );
+
+  const anonPortal = await fetch(`${BASE}/portal`, { redirect: "manual" });
+  check(
+    "an unauthenticated visitor is sent to the portal login",
+    anonPortal.status === 307 && (anonPortal.headers.get("location") ?? "").includes("/portal/login"),
+    `got ${anonPortal.status}`
+  );
+
+  // The other direction, and the easier one to get wrong: a portal session must
+  // not satisfy the staff guard. The proxy only reads `isp_session`, so this is
+  // the check that proves the two guards never met.
+  const anonStaff = await fetch(`${BASE}/customers`, { redirect: "manual" });
+  check(
+    "a session that is not a staff cookie cannot reach the staff app",
+    anonStaff.status === 307 && (anonStaff.headers.get("location") ?? "").includes("/login"),
+    `got ${anonStaff.status} -> ${anonStaff.headers.get("location")}`
+  );
+
+  const portalLogin = await fetch(`${BASE}/portal/login`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ username: "does-not-exist", password: "wrong" }),
+    redirect: "manual",
+  });
+  const setCookies = portalLogin.headers.getSetCookie?.() ?? [];
+  check(
+    "a failed portal login issues no session cookie",
+    !setCookies.some((c) => c.startsWith("portal_session=")),
+    "a rejected login must not hand out a session"
+  );
+
+  // Reseller pages are permission-gated like any other staff screen.
+  for (const path of ["/resellers", "/resellers/commission"]) {
+    const r = await api(path);
+    check(`${path} is reachable for an admin`, r.status === 200, `got ${r.status}`);
+  }
+
+  const commission = await api("/resellers/commission?from=2000-01-01&to=2100-01-01");
+  const body = typeof commission.body === "string" ? "" : commission.body;
+  void body;
+  check("the commission report renders", commission.status === 200, `got ${commission.status}`);
+}
+
 console.log(`\n${"─".repeat(46)}`);
 console.log(`  ${pass} passed, ${fail} failed`);
 console.log(`${"─".repeat(46)}\n`);

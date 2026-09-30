@@ -1,106 +1,101 @@
-# Phase D — FUP enforcement
+# Phase D (official) — Customer self-service portal + reseller management
 
-The specification this phase was built to. Kept in the repository so the
-reasoning survives the code.
+Branch `muse/phase-d-portal`, from `origin/main` at `0470881`.
 
-Base: `origin/main` at `09dd214`. Branch: `muse/phase-d`.
+Note on naming: an earlier commit on this branch line (`219791b`, "Phase D: FUP
+enforcement") was built against a different brief and is **not** this phase. It
+stays where it is; nothing here replaces it.
 
-## Why this phase exists
+## The one assumption in the plan that was wrong
 
-`Package.fupLimit` has existed since the first schema. Nothing read it. A package
-could promise 50 GB and a customer could use 400, and the system would say
-"Within allowance" because there was no allowance to be within.
+The plan said to reuse how `Customer.password` is stored and authenticate portal
+customers against it.
 
-An ISP sells capped packages precisely because an uncapped one is unprofitable on
-a shared uplink. A limit that is not enforced is not a commercial control, it is a
-suggestion.
+`Customer.password` is the **PPPoE secret**. It is stored in the clear because a
+MikroTik needs it in the clear, and it is sent to the router in the clear on every
+provisioning, reprofiling and deletion call. Authenticating anyone against it
+would mean:
 
-## D1 — Measuring the cycle
+- the same credential exists in two places, and the copy in transit is readable;
+- a technician who can see it can impersonate the customer in the portal;
+- worse, the PPPoE password is routinely written on stickers and told to
+  customers over the phone — so it is not a secret in any practical sense.
 
-`customerCycleUsage(customerId)` sums the `OnlineSession` rows that started inside
-the customer's current cycle.
+So the portal gets its own credential: `Customer.portalPasswordHash`, a bcrypt
+hash, set by the customer or by staff. `Customer.password` is untouched and is
+still never accepted as proof of identity anywhere.
 
-The cycle comes from the **latest invoice's** `billingFrom`/`billingTo`, not from a
-rolling window. That distinction is the whole thing: the number has to be
-measured over the period the customer was charged for. A rolling 30-day window
-would throttle someone for exceeding a period that is not on any bill, and they
-would have no answer when they asked why.
+A test asserts the PPPoE password is refused at the portal login, because that
+is the property most likely to be quietly reintroduced later.
 
-Falling back to "now minus `package.validityDays`" only when there is no invoice
-at all, because then there is nothing to align to.
+## Portal authentication
 
-`network-sync` stores `max(stored, reported)` for an open session, so a router
-counter reset cannot make usage appear to fall — which is what makes a plain sum
-of session rows the cycle total, with no double counting.
+| Concern | Decision |
+| --- | --- |
+| Credential | `portalPasswordHash`, bcrypt cost 10, as staff |
+| Cookie | `portal_session`, httpOnly, sameSite lax, path `/` |
+| Secure flag | Keyed on `x-forwarded-proto`, not `NODE_ENV` — the same reasoning as staff, where a production build served over http silently drops the cookie and every page bounces to the login screen |
+| Payload | `{ customerId, portalTokenVersion }` |
+| Revocation | The customer's current `portalTokenVersion` must match the cookie. Setting or clearing the password bumps it, which ends every existing session |
+| Disconnected line | Treated as no session — the account is closed |
+| Unknown username | Same error as a wrong password, and the same bcrypt work done first, so the form cannot be used to enumerate customers |
 
-### Arithmetic
+## Isolation
 
-The sum is done in BigInt and converted to a `number` exactly once, at the end.
-Adding converted per-session numbers would lose precision above 2^53 bytes
-(about 9 PB), which a busy shared uplink can reach over a long cycle. One
-conversion at the end keeps the figure exact for the comparison that matters.
+Two directions, and the second is the one that is easy to get wrong:
 
-### Known limitation — not hidden
+- **Staff cookie → portal page.** `getPortalSession()` reads only
+  `portal_session`, so a staff cookie satisfies nothing.
+- **Portal cookie → staff page.** `getSession()` reads only `isp_session`. The
+  proxy — which runs before any page code — also only checks `isp_session`, so a
+  portal cookie is invisible to it.
 
-If a session drops between two router syncs, the transfer made in that gap is
-recorded nowhere: the row is closed holding whatever the last sync saw. Usage is
-therefore **under-reported**, and under-reporting is the safe direction — a
-customer is never throttled for traffic we failed to observe. Phase W's RADIUS
-accounting closes the gap properly, because an Interim-Update carries the
-authoritative counter rather than a snapshot that might have been missed.
+The proxy steps aside for `/portal` and lets `requirePortalCustomer()` do the real
+work in the page. It cannot do the job itself: it cannot read the customer id out
+of the portal JWT, so a gate there could only check that *some* portal cookie
+exists, which would let any signed-in customer reach any other customer's URL.
 
-## D2 — State
+On every portal action the authority is the session, not a permission. A customer
+has no staff permissions and must not acquire any by calling an action. The check
+is ownership: the row's `customerId` must equal the session's, or it is refused.
+Invoice and ticket pages select on `{ id }` and compare, rather than looking the
+row up first and checking afterwards.
 
-`Customer.fupThrottled` / `fupThrottledAt` and `Package.fupProfile`, plus the
-`network.fupAction` setting with three values.
+Internal staff notes are filtered in the query (`where: { isInternal: false }`),
+not filtered after fetching, so a note cannot reach a customer's page even for one
+render.
 
-`fupAction` defaults to **off**. Throttling changes what a paying customer
-actually gets, and that should be a decision an ISP makes after looking at its own
-figures — not one inherited from installing software. The other two settings that
-touch a paying customer (`autoReconnect`, `enforceOnSuspend`) default to on
-because they restore or enforce something the customer has already paid for;
-throttling restricts, which is the opposite.
+## Routes
 
-## D3 — The job
+| Route | Purpose |
+| --- | --- |
+| `/portal/login` | Sign in. Same error for unknown user and wrong password |
+| `/portal` | Package, total due (via the same `syncCustomerBilling` the staff screen uses), expiry, cycle data usage |
+| `/portal/invoices` | Their invoices |
+| `/portal/invoices/[id]` | One invoice and **Pay Online** |
+| `/portal/tickets` | Their requests |
+| `/portal/tickets/new` | Raise one — `customerId` from the session, never the form |
+| `/portal/tickets/[id]` | Status and conversation |
+| `/portal/password` | Change the portal password |
 
-Three rules shape `enforceFup()`:
+The due figure is `syncCustomerBilling()`, the same recompute the staff customer
+screen calls. A second formula would be a second answer to "what does this person
+owe", and the two would eventually disagree.
 
-- **Throttling is sticky within a cycle.** The flag is set once, and the profile
-  is not re-applied on later runs. Without this, a customer over their limit
-  produces an identical router write on every scheduled run, and a briefly
-  unreachable router is written to a hundred times before anyone looks.
-- **A package with no throttled profile cannot be throttled.** The customer is
-  still notified, and the reason is recorded — which is more use than silently
-  doing nothing, because the ISP learns the package needs fixing.
-- **A hotspot router is never throttled.** There is no PPP secret to point at a
-  different profile, so the only honest action is to tell the customer.
+## Resellers
 
-Suspension is not touched here. It is a billing decision, it belongs to the
-expiry sweep, and it takes precedence — a suspended customer is left exactly as
-they are.
+Scope is tracking and reporting. No ledger, no login — the reasoning is in
+`ISP.md`, and it is the important decision in this half of the phase.
 
-A customer's own password is never involved. The profile is repointed on the
-existing secret, so the credential they use does not change and their connection
-survives.
+``` text
+collected  = SUM(Payment.amount WHERE collectedByResellerId = r AND in period)
+commission = collected × commissionPct / 100
+```
 
-The restore path clears the flag even when the package has no profile to restore
-to, leaving them on the router's default. A customer stuck on the throttled
-profile forever is worse than one on the package default.
+Derived on read. Two consequences worth naming: it cannot drift from the payments,
+and a rate change applies to a period as reported. `commissionPct` is a `Decimal`,
+because 7.5% is exact and a float is not.
 
-## D4 — Surfacing it
-
-A progress bar on the customer profile's Usage tab, with a badge. It renders
-**nothing at all** when the package has no limit: a bar reading "0 / 0 GB" or the
-word "Unlimited" is decoration that pushes the graphs down the page for a
-customer whose package has no such concept.
-
-The bar is capped at full width, because usage can run to several times the
-limit before the next cycle and a bar that overflows its track looks broken
-rather than like an overage. The colour changes at 80% and again at the limit, and
-the number on the badge is what matters, not the colour.
-
-The bell entry is conditional on a non-zero count, for the same reason the
-progress bar is conditional on a limit: a permanent "Throttled: 0" trains people
-to ignore the bell.
-
-## D5 — This file
+The report shows staff-collected cash alongside the reseller half so the two add
+up to the whole. A report that shows only the reseller half invites "and what
+about the rest?" with no way to answer it.

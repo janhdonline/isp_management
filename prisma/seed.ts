@@ -1011,6 +1011,94 @@ async function main() {
   console.log("Seeding HR records...");
   await seedHr(ref);
 
+  console.log("Seeding resellers...");
+
+  // Two zone resellers, and one inactive, so the list and the report have
+  // something to show. Payments attributed to them are created below so the
+  // commission figure is derived from real rows rather than asserted at.
+  const karim = await prisma.reseller.create({
+    data: {
+      name: "Karim Uddin",
+      phone: "01711000111",
+      areaId: ref.areas[0]?.id ?? null,
+      commissionPct: 7.5,
+      status: "Active",
+    },
+    select: { id: true, name: true, commissionPct: true },
+  });
+
+  const selina = await prisma.reseller.create({
+    data: {
+      name: "Selina Akter",
+      phone: "01711000222",
+      areaId: ref.areas[1]?.id ?? null,
+      commissionPct: 6,
+      status: "Active",
+    },
+    select: { id: true, name: true, commissionPct: true },
+  });
+
+  await prisma.reseller.create({
+    data: { name: "Rafiq (retired)", phone: null, commissionPct: 5, status: "Inactive" },
+  });
+
+  // A few customers attributed to the zone resellers, and a handful of payments
+  // taken by them — so the commission report reconciles with payment rows
+  // instead of being a number nothing produces.
+  const maxRow = await prisma.payment.aggregate({ _max: { paymentId: true } });
+  const existingMaxId = maxRow._max.paymentId ?? "PAY-000000";
+  let paymentSeq = 0;
+
+  for (const [i, reseller] of [karim, selina].entries()) {
+    for (let c = 0; c < 4; c++) {
+      const customer = customers[i * 4 + c];
+      if (!customer) continue;
+      await prisma.customer.update({ where: { id: customer.id }, data: { resellerId: reseller.id } });
+
+      for (let p = 0; p < 2; p++) {
+        const existing = await prisma.payment.findFirst({
+          where: { customerId: customer.id, note: "Zone collection" },
+        });
+        if (existing) continue;
+
+        // Started above whatever already exists rather than from zero, because
+        // this section runs after seedBilling and a payment id is unique. The
+        // counter is reconciled at the end by alignCounters().
+        const [, tail] = /^PAY-(\d+)$/.exec(existingMaxId) ?? [];
+        paymentSeq = Math.max(paymentSeq, Number(tail ?? 0)) + 1;
+        const paymentId = `PAY-${String(paymentSeq).padStart(6, "0")}`;
+        await prisma.payment.create({
+          data: {
+            paymentId,
+            customerId: customer.id,
+            amount: between(400, 1500),
+            method: "Cash",
+            accountId: (await prisma.account.findFirstOrThrow({ where: { type: "Cash" } })).id,
+            collectedByResellerId: reseller.id,
+            paymentDate: addDays(new Date(), -between(1, 25)),
+            note: "Zone collection",
+          },
+        });
+      }
+    }
+  }
+
+  // A portal password for the first two customers, so the portal can be tried
+  // without staff setting anything up. Deliberately not the PPPoE password: the
+  // portal credential is a separate bcrypt hash, which is the whole point.
+  for (const [i, customer] of customers.slice(0, 2).entries()) {
+    await prisma.customer.update({
+      where: { id: customer.id },
+      data: {
+        portalPasswordHash: await bcrypt.hash("portal" + (i + 1), 10),
+        portalTokenVersion: 1,
+      },
+    });
+  }
+  console.log(
+    `  demo portal accounts: ${customers[0]?.username} / portal1, ${customers[1]?.username} / portal2`
+  );
+
   console.log("Seeding inventory...");
   await seedInventory(ref, customers, userIds);
 

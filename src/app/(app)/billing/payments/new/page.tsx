@@ -16,7 +16,7 @@ export default async function NewPaymentPage({
   const defaultCustomerId = typeof sp.customerId === "string" ? sp.customerId : undefined;
   const defaultInvoiceId = typeof sp.invoiceId === "string" ? sp.invoiceId : undefined;
 
-  const [customers, accounts, invoices] = await Promise.all([
+  const [customers, accounts, invoices, resellers] = await Promise.all([
     prisma.customer.findMany({
       where: { connectionStatus: { not: "Archived" } },
       orderBy: { name: "asc" },
@@ -28,6 +28,7 @@ export default async function NewPaymentPage({
       orderBy: { dueDate: "asc" },
       select: { id: true, customerId: true, invoiceNumber: true, total: true, paid: true, dueDate: true },
     }),
+    prisma.reseller.findMany({ where: { status: "Active" }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
   ]);
 
   const invoicesByCustomer: Record<string, { id: string; invoiceNumber: string; total: number; paid: number; dueDate: Date }[]> = {};
@@ -52,6 +53,7 @@ export default async function NewPaymentPage({
         <Card>
           <CardBody>
             <CollectPaymentForm
+              resellers={resellers}
               today={new Date().toISOString().slice(0, 10)}
               customers={customers}
               accounts={accounts.map((a) => ({ id: a.id, name: a.name, type: a.type, currentBalance: a.currentBalance }))}

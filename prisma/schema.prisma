@@ -134,6 +134,7 @@ model Area {
   olts      Olt[]
   onus      Onu[]
   employees Employee[]
+  resellers Reseller[]
   tickets   Ticket[]
 
   @@unique([name, zoneId])
@@ -202,7 +203,16 @@ model Customer {
 
   // Connection information
   username          String    @unique
+  /// The PPPoE secret as the router stores it. It is a network credential, not a
+  /// login: it is sent to the MikroTik in the clear, so it must never be
+  /// accepted as proof of identity anywhere.
   password          String?
+  /// bcrypt hash of the *portal* password — a separate credential the customer
+  /// chose, for this site only. Null means portal access has not been set up.
+  portalPasswordHash String?
+  /// Bumped when the portal password changes, which ends every portal session
+  /// issued before it. A JWT cannot be edited to claim a newer version.
+  portalTokenVersion Int      @default(0)
   connectionType    String    @default("PPPoE")
   packageId         String?
   package           Package?  @relation(fields: [packageId], references: [id], onDelete: SetNull)
@@ -266,6 +276,8 @@ model Customer {
   autoCollections AutoCollectionRun[]
   networkActions NetworkAction[]
   equipment    CustomerEquipment[]
+  resellerId   String?
+  reseller     Reseller? @relation(fields: [resellerId], references: [id], onDelete: SetNull)
 
   @@index([areaId])
   @@index([packageId])
@@ -348,6 +360,10 @@ model Payment {
   account       Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
   collectedById String?
   collectedBy   User?    @relation("PaymentCollector", fields: [collectedById], references: [id], onDelete: SetNull)
+  /// Set when a zone reseller took the cash rather than staff. Commission is
+  /// derived from this, never stored.
+  collectedByResellerId String?
+  collectedByReseller   Reseller? @relation("PaymentReseller", fields: [collectedByResellerId], references: [id], onDelete: SetNull)
   paymentDate   DateTime @default(now())
   note          String?
   createdAt     DateTime @default(now())
@@ -958,6 +974,32 @@ model CustomerEquipment {
 
   @@index([customerId])
   @@index([itemId])
+  @@index([status])
+}
+
+/// A zone reseller who collects cash on the ISP's behalf.
+///
+/// Tracked and reported, not a login and not a ledger. Zone-wise collection is
+/// how a Bangladeshi ISP actually reaches its customers, and the number that
+/// makes it worth doing is the commission, so the report is the product. What is
+/// deliberately absent: a separate money ledger and a reseller login. A
+/// half-built multi-tenant ledger is worse than none, because the commission
+/// report would then have two sources of truth.
+model Reseller {
+  id            String   @id @default(cuid())
+  name          String
+  phone         String?
+  areaId        String?
+  area          Area?    @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  /// Percentage of collected cash owed to the reseller.
+  commissionPct Decimal  @default(0)
+  status        String   @default("Active") // Active | Inactive
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  customers Customer[]
+  payments  Payment[] @relation("PaymentReseller")
+
   @@index([status])
 }
 

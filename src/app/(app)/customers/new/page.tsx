@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "New Customer" };
 
 export default async function NewCustomerPage() {
-  const [areas, packages, routers, olts, settings] = await Promise.all([
+  const [areas, packages, routers, olts, settings, resellers] = await Promise.all([
     prisma.area.findMany({
       where: { status: "Active" },
       include: { zone: { select: { name: true } } },
@@ -19,6 +19,11 @@ export default async function NewCustomerPage() {
     prisma.router.findMany({ orderBy: { name: "asc" } }),
     prisma.olt.findMany({ orderBy: { name: "asc" } }),
     getSettings(),
+    prisma.reseller.findMany({
+      where: { status: "Active" },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
   ]);
 
   const prefix = settings["billing.customerPrefix"] ?? "CUS";
@@ -43,6 +48,7 @@ export default async function NewCustomerPage() {
 
         <CustomerForm
           areas={areas.map((a) => ({ id: a.id, name: a.name, zone: a.zone?.name ?? null }))}
+          resellers={resellers}
           packages={packages.map((p) => ({
             id: p.id,
             name: p.name,

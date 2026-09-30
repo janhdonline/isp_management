@@ -182,6 +182,7 @@ export const PERMISSION_RESOURCES = [
   "Expenses",
   "Accounts",
   "Inventory",
+  "Resellers",
   "Employees",
   "Reports",
   "Notifications",

@@ -25,12 +25,28 @@ const PUBLIC_PATHS = [
  */
 const TOKEN_PATHS = ["/api/cron", "/api/webhooks"];
 
+/**
+ * The customer portal, authenticated by its own cookie and its own guard.
+ *
+ * These paths are skipped by the staff session check on purpose, and the
+ * direction of the skip matters. Putting a staff gate in front of them would
+ * make the portal unreachable for every customer, because none of them have a
+ * staff account. Putting a *portal* gate here would be worse: the proxy cannot
+ * read the customer id out of the portal JWT, so it could only check that some
+ * portal cookie exists — which would let any signed-in customer reach any
+ * other customer's URL. So the proxy steps aside and `requirePortalCustomer()`
+ * does the real work, in the page, with the customer id it needs.
+ */
+const PORTAL_PREFIX = "/portal";
+
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (
     PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ||
     TOKEN_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ||
+    pathname === PORTAL_PREFIX ||
+    pathname.startsWith(`${PORTAL_PREFIX}/`) ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
     pathname.includes(".")

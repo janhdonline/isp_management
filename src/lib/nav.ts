@@ -13,6 +13,7 @@ import {
   Bell,
   Settings,
   Boxes,
+  Handshake,
   type LucideIcon,
 } from "lucide-react";
 
@@ -144,6 +145,16 @@ export const NAV: NavItem[] = [
     permission: "inventory.view",
     children: [
       { label: "Items", href: "/inventory", permission: "inventory.view" },
+    ],
+  },
+  {
+    label: "Resellers",
+    href: "/resellers",
+    icon: Handshake,
+    permission: "resellers.view",
+    children: [
+      { label: "Resellers", href: "/resellers", permission: "resellers.view" },
+      { label: "Commission", href: "/resellers/commission", permission: "resellers.view" },
     ],
   },
   {

@@ -9,6 +9,8 @@ import { nextNumber, Tx } from "@/lib/counter";
 import { getSettings } from "@/lib/settings";
 import { addDays, round2, startOfDay } from "@/lib/utils";
 import { logActivity, prismaLog } from "@/lib/services/activity";
+import { setPortalPassword } from "@/lib/portal-auth";
+import { checkPasswordStrength } from "@/lib/password";
 import { changePackage, deleteCustomer, disconnectCustomer, reconnectCustomer, renewCustomer, suspendCustomer } from "@/lib/services/customers";
 import { syncCustomerBilling } from "@/lib/services/billing";
 import {
@@ -74,6 +76,7 @@ export async function createCustomerAction(
         gender: d.gender || null,
         address: d.address,
         areaId: d.areaId || null,
+        resellerId: d.resellerId || null,
         customerType: d.customerType,
         photoUrl: d.photoUrl,
         username: d.username,
@@ -574,5 +577,72 @@ export async function createInvoiceForCustomerAction(
     return { success: `Invoice ${invoice.invoiceNumber} created.`, id: invoice.id };
   } catch (e) {
     return { formError: e instanceof Error ? e.message : "Invoice creation failed" };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Portal access                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Sets or clears a customer's portal password on their behalf.
+ *
+ * Staff do this because most customers cannot create a portal account
+ * themselves — they do not know they have one. The version bump is what makes
+ * the change real: a customer who was reading their bills in the portal while
+ * staff reset their password would otherwise stay signed in under the old one.
+ *
+ * The PPPoE password is never involved. It is a network credential the router
+ * needs in the clear, and it is not a login.
+ */
+export async function setPortalPasswordAction(
+  customerId: string,
+  password: string
+): Promise<FormState & { cleared?: boolean }> {
+  try {
+    const session = await requirePermission("customers.edit");
+
+    const customer = await prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { id: true, name: true, username: true },
+    });
+    if (!customer) return { formError: "That customer no longer exists." };
+
+    const clearing = password === "__clear__";
+    if (clearing) {
+      await prisma.customer.update({
+        where: { id: customerId },
+        data: { portalPasswordHash: null, portalTokenVersion: { increment: 1 } },
+      });
+      await logActivity(
+        {
+          action: "Update",
+          entity: "Customer",
+          entityId: customerId,
+          summary: `Portal access removed for ${customer.name} (${customer.username}); all portal sessions ended`,
+        },
+        session.id
+      );
+      revalidatePath(`/customers/${customerId}`);
+      return { success: "Portal access removed.", cleared: true };
+    }
+
+    const weakness = checkPasswordStrength(password);
+    if (weakness) return { formError: weakness };
+
+    await setPortalPassword(customerId, password);
+    await logActivity(
+      {
+        action: "Update",
+        entity: "Customer",
+        entityId: customerId,
+        summary: `Portal password set for ${customer.name} (${customer.username}); all portal sessions ended`,
+      },
+      session.id
+    );
+    revalidatePath(`/customers/${customerId}`);
+    return { success: "Portal password set. Tell the customer to sign in at /portal/login." };
+  } catch (e) {
+    return { formError: e instanceof Error ? e.message : "Could not set the portal password" };
   }
 }

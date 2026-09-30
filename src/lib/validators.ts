@@ -59,9 +59,21 @@ const dateStr = z.coerce.date({ message: "Enter a valid date" });
 // Customer
 // ---------------------------------------------------------------------------
 
+/**
+ * An empty select box arrives as "", and Prisma wants a real null for a
+ * nullable relation. Normalised here so no caller has to remember.
+ */
+const optionalId = z.preprocess(
+  (v) => (v === "" || v === null || v === undefined ? null : String(v)),
+  z.string().nullable()
+);
+
 const customerBase = z.object({
     // personal
     name: required("Customer name"),
+    // Attribution for zone collections. Optional, and never required: most
+    // customers pay at the office, so a customer with no reseller is normal.
+    resellerId: optionalId,
     fatherName: optionalText(120),
     motherName: optionalText(120),
     phone: phoneSchema,
@@ -186,6 +198,14 @@ export const paymentSchema = z
     accountId: required("Account"),
     paymentDate: dateStr,
     note: optionalText(500),
+    // Set when a zone reseller took the cash. Optional — most payments are taken
+    // at the office by staff — and it is what the commission report is derived
+    // from, so it is recorded once at the point of collection rather than
+    // inferred later.
+    collectedByResellerId: z.preprocess(
+      (v) => (v === "" || v === null || v === undefined ? null : String(v)),
+      z.string().nullable()
+    ),
   })
   .superRefine((d, ctx) => {
     if (d.discount > d.amount) {
@@ -203,6 +223,14 @@ export const receivePaymentSchema = z
     transactionId: optionalText(80),
     paymentDate: dateStr,
     note: optionalText(500),
+    // Set when a zone reseller took the cash. Optional — most payments are taken
+    // at the office by staff — and it is what the commission report is derived
+    // from, so it is recorded once at the point of collection rather than
+    // inferred later.
+    collectedByResellerId: z.preprocess(
+      (v) => (v === "" || v === null || v === undefined ? null : String(v)),
+      z.string().nullable()
+    ),
   })
   .superRefine((d, ctx) => {
     if (d.discount > d.amount) {

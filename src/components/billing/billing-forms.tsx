@@ -57,6 +57,7 @@ function SubmitButton({ label }: { label: string }) {
 export function CollectPaymentForm({
   customers,
   accounts,
+  resellers,
   invoicesByCustomer,
   defaultCustomerId,
   defaultInvoiceId,
@@ -64,6 +65,8 @@ export function CollectPaymentForm({
 }: {
   customers: CustomerOption[];
   accounts: Account[];
+  /** Optional: only zone resellers exist to take cash on a customer's behalf. */
+  resellers?: { id: string; name: string }[];
   invoicesByCustomer: Record<string, InvoiceOption[]>;
   defaultCustomerId?: string;
   defaultInvoiceId?: string;
@@ -161,6 +164,22 @@ export function CollectPaymentForm({
             options={accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.type}) — ${formatCurrency(a.currentBalance)}` }))}
             placeholder="Select account"
             invalid={!!err("accountId")}
+          />
+        </Field>
+
+        {/* Optional and easy to miss on purpose: it is only relevant when cash
+            came through a zone reseller, and the commission report is derived
+            from whatever is set here. */}
+        <Field
+          label="Collected by reseller"
+          error={err("collectedByResellerId")}
+          hint="Optional. Only when a zone reseller took the cash, so the commission is tracked."
+        >
+          <Select
+            name="collectedByResellerId"
+            defaultValue=""
+            options={[{ value: "", label: "Staff at the office" }, ...(resellers ?? []).map((r) => ({ value: r.id, label: r.name }))]}
+            placeholder="Staff at the office"
           />
         </Field>
 

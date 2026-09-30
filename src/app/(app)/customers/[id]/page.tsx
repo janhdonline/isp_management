@@ -6,6 +6,7 @@ import { customerCycleUsage } from "@/lib/services/fup";
 import { getAllPackages } from "@/lib/services/packages";
 import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import { CustomerQuickActions } from "@/components/customers/customer-actions";
+import { PortalAccessButton } from "@/components/customers/portal-access-button";
 import { CustomerProfileHeader, CustomerProfileTabs } from "@/components/customers/customer-profile";
 import { StatusTriple } from "@/components/ui/badge";
 
@@ -77,6 +78,12 @@ export default async function CustomerProfilePage({
       >
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <CustomerProfileHeader customer={profile} />
+          <div className="flex flex-wrap items-center gap-2">
+          <PortalAccessButton
+            customerId={customer.id}
+            customerName={customer.name}
+            hasAccess={Boolean(customer.portalPasswordHash)}
+          />
           <CustomerQuickActions
             customer={{
               id: customer.id,
@@ -87,6 +94,7 @@ export default async function CustomerProfilePage({
             }}
             packages={packages.map((p) => ({ id: p.id, name: p.name }))}
           />
+          </div>
         </div>
       </PageHeader>
 
