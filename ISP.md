@@ -965,10 +965,20 @@ ISP MANAGEMENT SYSTEM
 │   ├── Zone
 │   └── Coverage
 │
+├── Resellers
+│   ├── Reseller List
+│   ├── Reseller Details
+│   └── Commission Report
+│
 ├── Expenses
 │   ├── New Expense
 │   ├── Daily Expense
 │   └── Expense History
+│
+├── Inventory
+│   ├── Items
+│   ├── Stock Movements
+│   └── Assigned Equipment
 │
 ├── Accounts
 │   ├── Account List
@@ -996,14 +1006,96 @@ ISP MANAGEMENT SYSTEM
 │   ├── Email
 │   └── Message History
 │
-└── Settings
-    ├── General
-    ├── Billing
-    ├── Network
-    ├── Users & Roles
-    ├── SMS/API
-    └── Backup
+├── Settings
+│   ├── General
+│   ├── Billing
+│   ├── Network
+│   ├── Users & Roles
+│   ├── SMS/API
+│   └── Backup
+│
+└── Customer Portal (/portal)
+    ├── Overview
+    ├── Invoices
+    ├── Tickets
+    └── Password
 ```
+
+## 23. Inventory
+
+Cards: Total Items, Low Stock, Assigned, Stock Value
+
+Filters: Category, Status, Search
+
+Table: Item, SKU, Category, Quantity, Unit Price, Status, Action
+
+Item Details: Specifications, Stock Movements, Assigned To
+
+Actions: Add Stock, Adjust, Assign to Customer, Return to Stock
+
+Stock Movement Ledger: Date, Type (Purchase / Assign / Return / Adjust),
+Quantity, Reference, By
+
+Auto-Provisioning: Network → Routers → AutoProvision toggle. When on, new
+customers get their PPPoE secret created automatically, package changes
+update the secret's profile, and deletion removes the secret. When off,
+this system never writes secrets on that router. Suspension is unaffected
+either way.
+
+------------------------------------------------------------------------
+
+## 24. FUP Enforcement
+
+Package: FUP Limit (GB), FUP Profile (throttled MikroTik profile)
+
+Customer Profile: Usage bar (cycle usage vs FUP limit), Throttled badge
+
+Settings → Network: FUP Action — Off / Notify / Throttle (default Off)
+
+Throttle: customers over the FUP limit are moved to the FUP profile
+automatically; restored to the package profile when the new billing cycle
+starts. Hotspot customers are notify-only (no PPP profile to change).
+
+Note: usage is synced from the router; bytes between the last sync and a
+session drop are under-reported until RADIUS accounting arrives.
+
+------------------------------------------------------------------------
+
+## 25. Customer Portal (/portal)
+
+Login: username + portal password (staff sets it on the customer page)
+
+Overview: Package, Status, Expiry Date, Total Due, Usage vs FUP limit
+
+Invoices: list + detail + "Pay Online" (gateway checkout, Phase B)
+
+Tickets: My Tickets, New Ticket, status timeline + comments
+
+Password: change portal password
+
+A portal customer only ever sees their own data. Staff sessions are not
+accepted on portal pages, and portal sessions are not accepted on staff
+pages.
+
+------------------------------------------------------------------------
+
+## 26. Reseller Management
+
+Reseller List: Name, Phone, Area, Commission %, Status, Customers, Collected
+
+Filters: Status, Area, Search
+
+Reseller Details: Assigned customers, collection history for a period
+
+Customer Form: Reseller dropdown (optional)
+
+Payment Form: Collected by Reseller (optional)
+
+Reports → Commission: date range, per-reseller collections, commission =
+collections × commission %. Derived from payment rows; v1 has no separate
+reseller ledger and no reseller login.
+
+------------------------------------------------------------------------
 
 ## Final Requirement
 
