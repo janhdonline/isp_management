@@ -5,6 +5,7 @@ import { getCustomerFull, listCustomers } from "@/lib/services/customers";
 import { getInvoiceFull, listInvoices, listPayments } from "@/lib/services/billing-queries";
 import { getAllPackages } from "@/lib/services/packages";
 import { getDashboardStats } from "@/lib/services/dashboard";
+import { listItems } from "@/lib/services/inventory";
 import { listAccounts } from "@/lib/services/accounts";
 import { listOnline } from "@/lib/services/network";
 import { prismaLog } from "@/lib/services/activity";
@@ -36,6 +37,13 @@ const ROUTES: Record<string, (q: Query) => unknown> = {
   accounts: () => listAccounts(),
   online: (q) => listOnline(q),
   stats: () => getDashboardStats(),
+  /**
+   * Stock, with the same search and category filter the screen uses.
+   *
+   * Included because a stock figure that only exists in a browser is no use to
+   * the person standing in the storeroom on a phone, or to the Excel export.
+   */
+  inventory: (q) => listItems({ q: q.q, category: q.category }),
 };
 
 function sp(url: string) {

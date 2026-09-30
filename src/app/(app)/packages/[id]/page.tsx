@@ -37,6 +37,7 @@ export default async function PackageDetailPage({ params }: { params: Promise<{ 
     validityDays: pkg.validityDays,
     billingCycle: pkg.billingCycle,
     fupLimit: pkg.fupLimit,
+    mikrotikProfile: pkg.mikrotikProfile,
     status: pkg.status,
     _count: { customers: pkg._count.customers },
   };

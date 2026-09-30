@@ -18,6 +18,8 @@ export type PkgDefaults = {
   validityDays?: number;
   billingCycle?: string;
   fupLimit?: number | null;
+  /// The RouterOS rate-limit profile this package provisions subscribers with.
+  mikrotikProfile?: string | null;
   description?: string;
   status?: string;
 };
@@ -121,6 +123,17 @@ export function PackageForm({
 
         <Field label="FUP Limit (GB)" error={err("fupLimit")} hint="Leave blank for unlimited usage">
           <Input name="fupLimit" type="number" step="0.1" min={0} defaultValue={defaults.fupLimit ?? ""} />
+        </Field>
+        <Field
+          label="MikroTik Profile"
+          error={err("mikrotikProfile")}
+          hint="The rate-limit profile on the router, e.g. 10Mbps. New subscribers and package changes are provisioned with it. Leave blank to use the router's default."
+        >
+          <Input
+            name="mikrotikProfile"
+            defaultValue={defaults.mikrotikProfile ?? ""}
+            placeholder="10Mbps"
+          />
         </Field>
         <Field label="Status">
           <Select name="status" defaultValue={defaults.status ?? "Active"} options={[{ value: "Active", label: "Active" }, { value: "Inactive", label: "Inactive" }]} />

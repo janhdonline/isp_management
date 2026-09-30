@@ -138,7 +138,10 @@ export function startMockRouter({
         if (req.method === "PUT") {
           const parsed = JSON.parse(body || "{}");
           const id = `*S${secrets.length + 1}`;
-          const row = { ".id": id, ...parsed };
+          // RouterOS defaults a new secret to enabled. The mock applies the same
+          // default, so a test that forgets to send `disabled` sees what the real
+          // device would do rather than an undefined field.
+          const row = { ".id": id, disabled: "no", ...parsed };
           secrets.push(row);
           return json(res, 200, row);
         }

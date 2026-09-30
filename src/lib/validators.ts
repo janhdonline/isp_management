@@ -143,6 +143,13 @@ export const packageSchema = z.object({
   validityDays: z.coerce.number().int().min(1, "Validity must be at least 1 day"),
   billingCycle: z.enum(BILLING_CYCLES).default("Monthly"),
   fupLimit: z.coerce.number().min(0).optional().nullable(),
+  /// The RouterOS rate-limit profile subscribers on this package are provisioned
+  /// with. Optional on purpose: a package with none is provisioned with no
+  /// profile, which leaves whatever the router defaults to in place.
+  mikrotikProfile: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : String(v).trim()),
+    z.string().max(60, "That profile name is too long for RouterOS").nullable()
+  ),
   description: optionalText(1000),
   status: z.enum(["Active", "Inactive"]).default("Active"),
 });

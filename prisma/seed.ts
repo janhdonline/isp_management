@@ -10,7 +10,7 @@ import { databaseUrl } from "../src/lib/db-url";
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { DEFAULT_SETTINGS } from "../src/lib/settings";
-import { buildPermissionKeys } from "../src/lib/permissions";
+import { buildPermissionKeys, ROLE_GRANT_RULES } from "../src/lib/permissions";
 
 const adapter = new PrismaPg({ connectionString: databaseUrl() });
 const prisma = new PrismaClient({ adapter });
@@ -57,14 +57,19 @@ async function seedRolesAndUsers() {
     await prisma.permission.create({ data: p });
   }
 
+  // The grants come from ROLE_GRANT_RULES rather than three hand-written lists,
+  // so this and scripts/sync-permissions.mjs cannot drift apart.
+  const grantsFor = (roleName: string) =>
+    permissions
+      .filter((p) => ROLE_GRANT_RULES[roleName]?.(p))
+      .map((p) => ({ permission: { connect: { key: p.key } } }));
+
   const adminRole = await prisma.role.create({
     data: {
       name: "Administrator",
       description: "Full access to every module",
       isSystem: true,
-      permissions: {
-        create: permissions.map((p) => ({ permission: { connect: { key: p.key } } })),
-      },
+      permissions: { create: grantsFor("Administrator") },
     },
   });
 
@@ -73,12 +78,7 @@ async function seedRolesAndUsers() {
       name: "Account Manager",
       description: "Customers, billing and accounts",
       isSystem: true,
-      permissions: {
-        create: permissions
-          .filter((p) => p.resource !== "Settings")
-          .filter((p) => !["employees.delete", "support.delete"].includes(p.key))
-          .map((p) => ({ permission: { connect: { key: p.key } } })),
-      },
+      permissions: { create: grantsFor("Account Manager") },
     },
   });
 
@@ -87,12 +87,7 @@ async function seedRolesAndUsers() {
       name: "Technician",
       description: "Network monitoring and support tickets",
       isSystem: true,
-      permissions: {
-        create: permissions
-          .filter((p) => ["Network", "Support", "Customers"].includes(p.resource))
-          .filter((p) => p.action === "View" || p.action === "Edit" || p.action === "Create")
-          .map((p) => ({ permission: { connect: { key: p.key } } })),
-      },
+      permissions: { create: grantsFor("Technician") },
     },
   });
 
@@ -785,11 +780,140 @@ async function seedActivity(userIds: { adminId: string; managerId: string }, cus
  * documents directly, so the counters must be moved past the highest value
  * already used, otherwise the first real invoice/payment would collide.
  */
+/**
+ * Stock, and a few devices already out with customers.
+ *
+ * Seeded through the same shape the app uses — a receipt, then issues — rather
+ * than by writing a balance directly, so the demo data's balances are provably
+ * the sum of their movements. Seed data that violates the module's own central
+ * rule is worse than none: it teaches the wrong thing to whoever is evaluating
+ * the system.
+ */
+async function seedInventory(
+  ref: Ref,
+  customers: Awaited<ReturnType<typeof seedBilling>>["customers"],
+  userIds: { adminId: string; techId: string }
+) {
+  // This section clears its own tables first. The rest of the seed assumes a
+  // fresh database, but a section that can fail half way through — a missing
+  // customer, a bad row — would otherwise poison every retry with a unique
+  // violation on the second run, and the original error would be invisible.
+  await prisma.customerEquipment.deleteMany();
+  await prisma.stockMovement.deleteMany();
+  await prisma.inventoryItem.deleteMany();
+
+  const catalogue = [
+    { name: "GPON ONT 1G, ZTE", sku: "ONT-ZTE-1G", category: "ONU", unit: "pcs", qty: 34, reorder: 10, price: 2200 },
+    { name: "GPON ONT 300M, VSOL", sku: "ONT-VSOL-300", category: "ONU", unit: "pcs", qty: 6, reorder: 10, price: 1450 },
+    { name: "FTTH drop cable 2km", sku: "CAB-FTTH-2K", category: "Cable", unit: "m", qty: 4200, reorder: 500, price: 12 },
+    { name: "1:8 PLC splitter", sku: "SPL-1x8", category: "Splitter", unit: "pcs", qty: 48, reorder: 15, price: 320 },
+    { name: "SC/APC pigtail", sku: "CON-APC", category: "Connector", unit: "pcs", qty: 260, reorder: 50, price: 45 },
+    { name: "WiFi 6 CPE, TP-Link", sku: "RTR-TPL-XDR", category: "Router", unit: "pcs", qty: 3, reorder: 5, price: 3400 },
+  ];
+
+  const items = [];
+  for (const c of catalogue) {
+    const item = await prisma.inventoryItem.create({
+      data: {
+        name: c.name,
+        sku: c.sku,
+        category: c.category,
+        unit: c.unit,
+        reorderLevel: c.reorder,
+        unitPrice: c.price,
+        quantity: 0,
+      },
+    });
+    // The opening receipt. Everything after this is a movement like any other.
+    await prisma.stockMovement.create({
+      data: {
+        itemId: item.id,
+        type: "IN",
+        quantity: c.qty,
+        note: "Opening stock",
+        reference: "OPENING",
+        createdById: userIds.adminId,
+      },
+    });
+    items.push({ ...item, opening: c.qty, category: c.category });
+  }
+
+  const onu = items[0];
+  const cable = items[2];
+
+  // A handful of ONUs out with real customers, so the equipment trail is visible
+  // rather than theoretical.
+  for (let i = 0; i < 8; i++) {
+    const customer = customers[i];
+    if (!customer) continue;
+    const serial = `ZTE1G-${String(100000 + i * 137)}`;
+    const issued = await prisma.customerEquipment.create({
+      data: {
+        customerId: customer.id,
+        itemId: onu.id,
+        serial,
+        status: "Assigned",
+      },
+    });
+    await prisma.stockMovement.create({
+      data: {
+        itemId: onu.id,
+        type: "OUT",
+        quantity: -1,
+        note: "Installed at activation",
+        reference: issued.serial,
+        createdById: userIds.techId,
+      },
+    });
+  }
+
+  // One returned and one written off, so the history shows both outcomes rather
+  // than only the tidy case.
+  const spare = await prisma.customerEquipment.create({
+    data: { customerId: customers[8]?.id ?? customers[0].id, itemId: onu.id, serial: "ZTE1G-999001", status: "Assigned" },
+  });
+  await prisma.stockMovement.create({
+    data: { itemId: onu.id, type: "IN", quantity: 1, note: "Returned - customer moved, kept the ONU", reference: spare.serial },
+  });
+  await prisma.customerEquipment.update({ where: { id: spare.id }, data: { status: "Returned", returnedAt: new Date() } });
+
+  const faulty = await prisma.customerEquipment.create({
+    data: { customerId: customers[9]?.id ?? customers[0].id, itemId: onu.id, serial: "ZTE1G-999002", status: "Faulty", returnedAt: new Date() },
+  });
+  await prisma.stockMovement.create({
+    data: { itemId: onu.id, type: "OUT", quantity: 0, note: "Written off as faulty - no light after a power cut", reference: faulty.serial },
+  });
+
+  // Cable consumed on a job.
+  await prisma.stockMovement.create({
+    data: { itemId: cable.id, type: "OUT", quantity: -320, note: "Fibre drop to Mirpur 12", reference: "WO-441", createdById: userIds.techId },
+  });
+
+  // The balances are derived from the movements rather than typed, so the demo
+  // data cannot disagree with its own ledger.
+  const sums = await prisma.stockMovement.groupBy({ by: ["itemId"], _sum: { quantity: true } });
+  for (const row of sums) {
+    await prisma.inventoryItem.update({
+      where: { id: row.itemId },
+      data: { quantity: row._sum.quantity ?? 0 },
+    });
+  }
+  void ref;
+}
+
 async function alignCounters() {
-  const seq = async (key: string, table: string, column: string, filter = "") => {
+  /**
+   * `where` is a full condition, not a fragment: the previous version pasted it
+   * straight after the table name with no `WHERE`, which is a syntax error. It
+   * only ever ran on the refund line, so the seed failed on that line and the
+   * refund counter was never aligned — `npm run setup` has been broken since
+   * refunds were added.
+   */
+  const seq = async (key: string, table: string, column: string, where?: string) => {
+    const clause = where ? ` WHERE ${where}` : "";
     // Take the digits at the end of the document number, e.g. "PAY-000123".
     const row = (await prisma.$queryRawUnsafe<{ v: bigint | number | null }[]>(
-      `SELECT MAX(NULLIF(SUBSTRING("${column}" FROM '[0-9]+$'), '')::bigint) AS v FROM "${table}" ${filter}`
+      `SELECT MAX(NULLIF(SUBSTRING("${column}" FROM '[0-9]+$'), '')::bigint) AS v FROM "${table}"${clause}`
     ))[0];
     const value = Number(row?.v ?? 0);
 
@@ -797,7 +921,7 @@ async function alignCounters() {
     // counter would sit at 0 — the first real document would then collide.
     if (value === 0) {
       const [{ count }] = await prisma.$queryRawUnsafe<{ count: number }[]>(
-        `SELECT COUNT(*)::int AS count FROM "${table}"`
+        `SELECT COUNT(*)::int AS count FROM "${table}"${clause}`
       );
       if (count > 0) {
         throw new Error(
@@ -821,8 +945,10 @@ async function alignCounters() {
   await seq("ticket", "Ticket", "ticketNumber");
   await seq("transfer", "AccountTransfer", "reference");
   await seq("shift", "CashShift", "shiftNumber");
-  // Refunds reuse the transaction reference column.
-  await seq("refund", "AccountTransaction", "reference", '"reference" LIKE \'RFD-%\'');
+  // Refunds reuse the transaction reference column, so the counter has to be read
+  // from refund rows only — otherwise the highest transfer reference would
+  // become the next refund number.
+  await seq("refund", "AccountTransaction", "reference", `"reference" LIKE 'RFD-%'`);
 }
 
 /**
@@ -885,6 +1011,9 @@ async function main() {
   console.log("Seeding HR records...");
   await seedHr(ref);
 
+  console.log("Seeding inventory...");
+  await seedInventory(ref, customers, userIds);
+
   console.log("Seeding activity log...");
   await seedActivity(userIds, customers);
 
@@ -903,6 +1032,9 @@ async function main() {
     expenses: await prisma.expense.count(),
     tickets: await prisma.ticket.count(),
     onus: await prisma.onu.count(),
+    inventoryItems: await prisma.inventoryItem.count(),
+    stockMovements: await prisma.stockMovement.count(),
+    equipmentOut: await prisma.customerEquipment.count(),
   };
   console.log("\nSeed complete:", counts);
 }

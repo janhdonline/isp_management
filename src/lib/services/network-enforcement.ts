@@ -34,13 +34,39 @@ import type { NetworkAdapter } from "@/lib/services/network-adapter";
 /** How many times a queued action is retried before it is given up on. */
 const MAX_ATTEMPTS = 10;
 
-/** Actions a queued row can represent. Later phases add to this list. */
+/** Actions a queued row can represent. */
 export type NetworkActionType =
   | "suspend"
   | "reconnect"
   | "provision"
   | "setProfile"
   | "removeSecret";
+
+/** How each action reads on an audit log and in the enforcement queue. */
+const ACTION_LABELS: Record<NetworkActionType, string> = {
+  suspend: "Suspend",
+  reconnect: "Reconnect",
+  provision: "Provision",
+  setProfile: "Set profile",
+  removeSecret: "Remove secret",
+};
+
+/**
+ * The actions whose *validity* depends on the customer's current state.
+ *
+ * Only these two get the "is this still what we want?" check in the retry job.
+ * Provisioning and profile changes are idempotent by nature — a secret that
+ * exists with the right profile is the desired end state whether you run the
+ * action once or ten times — so re-attempting them unconditionally is correct
+ * and skipping them would strand a customer whose router was briefly down.
+ */
+const STATE_DEPENDENT: ReadonlySet<NetworkActionType> = new Set<NetworkActionType>([
+  "suspend",
+  "reconnect",
+]);
+
+const isStateDependent = (action: string): boolean =>
+  STATE_DEPENDENT.has(action as NetworkActionType);
 
 export type EnforcementResult = {
   ok: boolean;
@@ -82,6 +108,48 @@ export async function enforceReconnect(
   userId?: string
 ): Promise<EnforcementResult> {
   return runEnforcement(customerId, "reconnect", userId);
+}
+
+/**
+ * Creates the subscriber's PPPoE secret on their router.
+ *
+ * Called after a new customer is committed, never before: an office must be able
+ * to enter a customer even when the router is down, and the queue is what makes
+ * that safe. The secret's profile comes from the customer's package unless the
+ * caller states one explicitly, which is what a package change does.
+ *
+ * The password is read fresh from the customer row inside the transaction rather
+ * than passed in by the caller. That is deliberate — a credential threaded through
+ * three function signatures is a credential that ends up in a log line.
+ */
+export async function enforceProvision(
+  customerId: string,
+  userId?: string,
+  profileOverride?: string
+): Promise<EnforcementResult> {
+  return runEnforcement(customerId, "provision", userId, undefined, {
+    profile: profileOverride,
+  });
+}
+
+/** Repoints an existing secret at a different rate-limit profile. */
+export async function enforceSetProfile(
+  customerId: string,
+  profile: string,
+  userId?: string
+): Promise<EnforcementResult> {
+  if (!profile.trim()) {
+    return { ok: false, detail: "No profile was given, so nothing was changed on the router." };
+  }
+  return runEnforcement(customerId, "setProfile", userId, undefined, { profile });
+}
+
+/** Deletes the secret entirely, for a subscriber who has left. */
+export async function enforceRemoveSecret(
+  customerId: string,
+  userId?: string
+): Promise<EnforcementResult> {
+  return runEnforcement(customerId, "removeSecret", userId);
 }
 
 /**
@@ -158,7 +226,14 @@ async function runEnforcement(
    * leave the original Pending forever, so the queue would grow by one row per
    * attempt and the same work would be re-run from a new row every cycle.
    */
-  existingActionId?: string
+  existingActionId?: string,
+  /**
+   * Action-specific detail. The profile for a `setProfile` lives here so a
+   * queued action carries the profile it was created for; without it a retry
+   * would have to re-derive it, and a package change since then would silently
+   * apply the wrong speed to a router.
+   */
+  options?: { profile?: string }
 ): Promise<EnforcementResult> {
   const s = await getSettings();
 
@@ -167,7 +242,9 @@ async function runEnforcement(
       ok: true,
       skipped: true,
       detail:
-        "Router enforcement is off, so the line was changed in the database only. See Settings → Network.",
+        action === "suspend" || action === "reconnect"
+          ? "Router enforcement is off, so the line was changed in the database only. See Settings → Network."
+          : "Router enforcement is off, so nothing was configured on the router. See Settings → Network.",
     };
   }
 
@@ -177,7 +254,11 @@ async function runEnforcement(
       id: true,
       name: true,
       username: true,
+      // Read fresh rather than passed in: the credential is re-read at the moment
+      // of provisioning so a rotated password is what reaches the router.
+      password: true,
       routerId: true,
+      package: { select: { mikrotikProfile: true } },
       router: {
         select: {
           id: true,
@@ -210,13 +291,21 @@ async function runEnforcement(
 
   const enabled = action === "reconnect";
 
+  // A caller-stated profile wins over the package's current one, because that is
+  // how a package change pins the profile it wants applied.
+  const profile = options?.profile?.trim() || customer.package?.mikrotikProfile || undefined;
+
   // Queued before the attempt. If this process dies here, the action is still
   // pending and the retry job picks it up — the alternative loses the one case
   // where a customer was meant to be cut off.
   const row = existingActionId
     ? await prisma.networkAction.update({
         where: { id: existingActionId },
-        data: { routerId: customer.router.id, username: customer.username },
+        data: {
+          routerId: customer.router.id,
+          username: customer.username,
+          ...(profile ? { payload: profile } : {}),
+        },
       })
     : await prisma.networkAction.create({
         data: {
@@ -225,6 +314,9 @@ async function runEnforcement(
           username: customer.username,
           action,
           status: "Pending",
+          // The profile is carried on the row so a retry applies the profile the
+          // action was created for, not whatever the package says by then.
+          payload: profile ?? null,
         },
       });
 
@@ -242,7 +334,9 @@ async function runEnforcement(
     return resolve(
       row.id,
       "Retry",
-      `${customer.router.name} has no API credentials, so ${customer.username} was not ${enabled ? "restored" : "disconnected"} on the router. Add the API user in Network → Routers.`,
+      `${customer.router.name} has no API credentials, so ${customer.username} was not ${
+        enabled ? "restored" : "disconnected"
+      } on the router. Add the API user in Network → Routers.`,
       customer,
       action,
       userId
@@ -250,7 +344,48 @@ async function runEnforcement(
   }
 
   try {
-    await adapter.setAccess(customer.username, enabled);
+    switch (action) {
+      case "suspend":
+      case "reconnect":
+        await adapter.setAccess(customer.username, enabled);
+        break;
+
+      case "provision": {
+        // A subscriber with no password cannot be provisioned, and inventing one
+        // would mean a credential nobody knows. Reported rather than attempted.
+        if (!customer.password) {
+          return resolve(
+            row.id,
+            "Retry",
+            `${customer.name} has no PPPoE password set, so no secret could be created. Set the password on the customer record first.`,
+            customer,
+            action,
+            userId
+          );
+        }
+        await adapter.provisionSecret(customer.username, customer.password, profile);
+        break;
+      }
+
+      case "setProfile": {
+        if (!profile) {
+          return resolve(
+            row.id,
+            "Retry",
+            `No MikroTik profile was given for ${customer.username}, so nothing was changed. Set one on the package.`,
+            customer,
+            action,
+            userId
+          );
+        }
+        await adapter.setSecretProfile(customer.username, profile);
+        break;
+      }
+
+      case "removeSecret":
+        await adapter.removeSecret(customer.username);
+        break;
+    }
   } catch (e) {
     const detail = describe(e);
     // Still queued: a router that is off for the night gets picked up by the
@@ -261,11 +396,27 @@ async function runEnforcement(
   return resolve(
     row.id,
     "Done",
-    `${enabled ? "Restored" : "Suspended"} ${customer.username} on ${customer.router.name}.`,
+    `${describeOutcome(action, enabled)} ${customer.username} on ${customer.router.name}.`,
     customer,
     action,
     userId
   );
+}
+
+function describeOutcome(action: NetworkActionType, enabled: boolean): string {
+  switch (action) {
+    case "suspend":
+      return "Suspended";
+    case "reconnect":
+      return "Restored";
+    case "provision":
+      return "Provisioned";
+    case "setProfile":
+      return "Reprofiled";
+    case "removeSecret":
+      return "Removed the secret for";
+  }
+  void enabled;
 }
 
 /**
@@ -298,10 +449,10 @@ async function resolve(
   });
 
   await logActivity({
-    action: action === "suspend" ? "Suspend" : "Reconnect",
+    action: ACTION_LABELS[action],
     entity: "Network",
     entityId: actionId,
-    summary: `${action === "suspend" ? "Suspend" : "Reconnect"} ${customer.name} (${customer.username}): ${detail}`,
+    summary: `${ACTION_LABELS[action]} ${customer.name} (${customer.username}): ${detail}`,
   }, userId);
 
   return {
@@ -371,26 +522,38 @@ export async function retryPendingNetworkActions(max = 50): Promise<{
     // If the database says the opposite of what this action wanted, the action
     // is obsolete. Disabling a secret for someone who has since paid is worse
     // than doing nothing.
-    const shouldBeEnabled = customer.connectionStatus === "Active";
-    if ((row.action === "suspend") === shouldBeEnabled) {
-      await prisma.networkAction.update({
-        where: { id: row.id },
-        data: {
-          status: "Done",
-          completedAt: new Date(),
-          lastError: null,
-          attempts: { increment: 1 },
-        },
-      });
-      stats.done += 1;
-      continue;
+    //
+    // Only for suspend/reconnect. Provisioning and profile changes are not
+    // statements about whether the customer *may* be online — they say what
+    // their access should look like, which stays true regardless of status, and
+    // applying that check to them would silently drop a queued provision for a
+    // customer who was suspended between creating the record and the router
+    // coming back.
+    if (isStateDependent(row.action)) {
+      const shouldBeEnabled = customer.connectionStatus === "Active";
+      if ((row.action === "suspend") === shouldBeEnabled) {
+        await prisma.networkAction.update({
+          where: { id: row.id },
+          data: {
+            status: "Done",
+            completedAt: new Date(),
+            lastError: null,
+            attempts: { increment: 1 },
+          },
+        });
+        stats.done += 1;
+        continue;
+      }
     }
 
     const result = await runEnforcement(
       customer.id,
       row.action as NetworkActionType,
       undefined,
-      row.id
+      row.id,
+      // The profile the row was queued with, so a retry after a further package
+      // change still applies what was originally asked for.
+      row.payload ? { profile: row.payload } : undefined
     );
     if (result.ok) stats.done += 1;
     else stats.failed += 1;

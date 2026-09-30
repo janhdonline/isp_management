@@ -171,7 +171,10 @@ export class SslCommerzGateway implements PaymentGateway {
     return { checkoutUrl: body.GatewayPageURL, gatewayRef: sessionKey, simulated: false };
   }
 
-  async parseCallback(rawBody: string, headers: Headers): Promise<GatewayCallback | null> {
+  // `headers` is accepted because some gateways sign their callbacks and the
+  // signature lives there. SSLCommerz does not — it publishes a validation API,
+  // which is stronger — so the argument is dropped at the boundary.
+  async parseCallback(rawBody: string): Promise<GatewayCallback | null> {
     if (!this.configured) return null;
 
     let posted: Record<string, string>;

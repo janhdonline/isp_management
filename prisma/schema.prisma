@@ -50,6 +50,7 @@ model User {
   resets       PasswordReset[]
   mandatesCreated PaymentMandate[] @relation("MandateCreator")
   backups      Backup[]
+  stockMovements StockMovement[] @relation("StockMovementBy")
 
   @@index([roleId])
   @@index([status])
@@ -164,6 +165,10 @@ model Package {
   toPackageChanges  CustomerPackageChange[] @relation("ToPackage")
   tickets           Ticket[]
   expenses          Expense[]
+  /// The RouterOS rate-limit profile this package maps to, e.g. "10Mbps".
+  /// Null means subscribers on this package are provisioned with no profile,
+  /// which is the same as leaving the router default in place.
+  mikrotikProfile String?
 
   @@index([status])
 }
@@ -251,6 +256,7 @@ model Customer {
   mandates     PaymentMandate[]
   autoCollections AutoCollectionRun[]
   networkActions NetworkAction[]
+  equipment    CustomerEquipment[]
 
   @@index([areaId])
   @@index([packageId])
@@ -863,6 +869,79 @@ model NetworkAction {
 
   @@index([status, createdAt])
   @@index([customerId])
+}
+
+/// A kind of equipment the ISP buys and hands out.
+///
+/// Stock is not a free-form number someone types in: `quantity` is the running
+/// total of `StockMovement` rows, and the two are only ever written together in
+/// one transaction. That is what makes the figure trustworthy — a stock level
+/// that can be edited directly is a stock level that will be wrong.
+model InventoryItem {
+  id          String   @id @default(cuid())
+  name        String
+  sku         String   @unique
+  category    String   @default("Other") // ONU | Router | Cable | Splitter | Connector | Other
+  unit        String   @default("pcs")
+  /// Always the sum of the movements. Recomputed, never trusted.
+  quantity    Int      @default(0)
+  /// At or below this the item is flagged as low stock.
+  reorderLevel Int     @default(0)
+  unitPrice   Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  movements   StockMovement[]
+  assigned    CustomerEquipment[]
+
+  @@index([category])
+  @@index([name])
+}
+
+/// One line of the stock ledger: what came in, what went out, or what the count
+/// actually found. Stock on hand is `SUM(quantity)` over these rows, so the
+/// history is the source of truth and cannot drift from the balance.
+model StockMovement {
+  id        String        @id @default(cuid())
+  itemId    String
+  item      InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  type      String // IN | OUT | ADJUST
+  /// Signed. IN and ADJUST-up are positive, OUT is negative, ADJUST-down negative.
+  quantity  Int
+  note      String?
+  /// A purchase order number, or the customer the unit went to.
+  reference String?
+  createdById String?
+  createdBy User?       @relation("StockMovementBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt DateTime    @default(now())
+
+  @@index([itemId, createdAt])
+  @@index([type])
+}
+
+/// A specific unit of equipment, in someone's house.
+///
+/// This is separate from the stock ledger on purpose: a hundred ONUs in the store
+/// is a stock figure, and the ONU with serial X in Rahim's flat is a thing that
+/// can be traced, returned, or reported faulty. A BTRC audit or a swap-out both
+/// need the second kind.
+model CustomerEquipment {
+  id         String        @id @default(cuid())
+  customerId String
+  customer   Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  itemId     String
+  item       InventoryItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  /// The serial printed on the device. Unique so one unit cannot be in two houses.
+  serial     String        @unique
+  mac        String?
+  status     String        @default("Assigned") // Assigned | Returned | Faulty
+  note       String?
+  assignedAt DateTime      @default(now())
+  returnedAt DateTime?
+
+  @@index([customerId])
+  @@index([itemId])
+  @@index([status])
 }
 
 /// Failed sign-in attempts, so a lockout survives a restart and is shared

@@ -62,7 +62,7 @@ npm run dev           # dev server
 npm run build         # production build
 npm run start         # serve the production build
 npm run lint          # eslint
-npm test              # 75 unit tests: enforcement, gateway, RouterOS, refunds, shifts, reset, PDF, rate limit
+npm test              # 109 unit tests: inventory, provisioning, enforcement, gateway, RouterOS, refunds, shifts, reset, PDF, rate limit
 npm run setup         # prisma migrate deploy + seed
 npm run prisma:seed   # reset + reseed demo data
 npm run db:reset      # drop and recreate the database
@@ -249,6 +249,53 @@ never check again:
 ```
 
 ---
+
+## Inventory and auto-provisioning
+
+`InventoryItem.quantity` is never typed in by anyone. It is the sum of
+`StockMovement` rows, and the movement and the balance are written in the same
+transaction. A stock figure that can be edited directly is a stock figure that
+will be wrong, and an ISP that thinks it has twenty spare ONUs and has four
+turns away customers. `reconcileStock()` asserts the two agree, and the test
+suite runs it across every item.
+
+A **reorder level of zero switches the warning off** rather than meaning
+"reorder when empty" — otherwise every item created with the default level
+lights up the low-stock list the moment it is empty, and an alert that is
+always on is one nobody reads. "Low stock" is `quantity <= reorderLevel`, a
+comparison between two columns of one row, which Prisma cannot express in a
+`where`; hard-coding `lte: 0` returns only the genuinely empty items and hides
+exactly the ones that need ordering.
+
+`CustomerEquipment` is separate from the ledger because a stock count and a
+device in someone's house are different facts. The serial is unique system-wide,
+so one ONU cannot be recorded in two houses — which is the failure that turns a
+swap into a fortnight of arguing about whose line actually works. A returned
+device rejoins the shelf; a faulty one is written off and stays on the ledger so
+the write-off is visible.
+
+**Provisioning.** `Package.mikrotikProfile` maps a package to a RouterOS
+rate-limit profile. A new customer gets their PPP secret created automatically
+after the transaction commits, a package change repoints the profile, and a
+deleted customer's secret is deleted rather than disabled — a disabled secret
+left behind hands its credentials to the next subscriber at that address.
+
+The profile is carried **on the queue row** rather than re-derived at retry
+time, so a change that fails and is retried after a further package change still
+applies what it was raised for.
+
+One asymmetry in the retry job, and it is deliberate:
+
+| Action | Is it still wanted? |
+| --- | --- |
+| `suspend` | Checked against the customer's current status. A queued suspend for someone who has since paid is dropped — executing it cuts off a customer who owes nothing. |
+| `provision`, `setProfile`, `removeSecret` | Never dropped. These say what access should look like, which stays true regardless of status. Applying the same check would silently drop a queued provision for a customer who happened to be suspended in between — and that subscriber is then never configured at all. |
+
+A hotspot router has no secret to create, so provisioning is skipped and logged
+rather than attempted. Adding `Inventory` to `PERMISSION_RESOURCES` generates
+`inventory.*` automatically; `scripts/sync-permissions.mjs` backfills them into
+the roles that already exist, because a new module nobody holds a permission for
+is indistinguishable from a broken sidebar.
 
 ## Online payments
 

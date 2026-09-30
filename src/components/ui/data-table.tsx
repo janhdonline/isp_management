@@ -300,6 +300,7 @@ export function DataTableShell<T>({
   onRowClick,
   className,
   compact,
+  rowClassName,
 }: {
   columns: Column<T>[];
   rows: T[];
@@ -315,6 +316,13 @@ export function DataTableShell<T>({
   onRowClick?: (row: T) => void;
   className?: string;
   compact?: boolean;
+  /**
+   * Per-row classes, for making a row stand out for something the data implies
+   * rather than states — a low-stock line, a breached SLA, a device that is
+   * down. A tinted row reads as a problem in a way a coloured badge in one
+   * column does not.
+   */
+  rowClassName?: (row: T, index: number) => string | undefined;
 }) {
   const { searchParams, setParams } = useTableQuery();
   const sort = searchParams.get("sort");
@@ -407,7 +415,8 @@ export function DataTableShell<T>({
                     className={cn(
                       "border-b border-[var(--border)] last:border-0 transition-colors hover:bg-gold-50/60 dark:hover:bg-[var(--surface-3)]",
                       isSelected && "bg-gold-100/70 dark:bg-gold-500/10",
-                      onRowClick && "cursor-pointer"
+                      onRowClick && "cursor-pointer",
+                      rowClassName?.(row, i)
                     )}
                   >
                     {selectable ? (

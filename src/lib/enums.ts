@@ -154,6 +154,23 @@ export const TRANSACTION_TYPES = [
   "Adjustment",
 ] as const;
 
+// --- Inventory ---
+//
+// These live here rather than in the inventory service because a client component
+// needs them: a service module also imports Prisma, and importing one from the
+// browser drags the database driver into the bundle and breaks the build.
+
+export const INVENTORY_CATEGORIES = [
+  "ONU",
+  "Router",
+  "Cable",
+  "Splitter",
+  "Connector",
+  "Other",
+] as const;
+
+export const STOCK_MOVEMENT_TYPES = ["IN", "OUT", "ADJUST"] as const;
+
 export const PERMISSION_RESOURCES = [
   "Customers",
   "Packages",
@@ -164,6 +181,7 @@ export const PERMISSION_RESOURCES = [
   "Areas",
   "Expenses",
   "Accounts",
+  "Inventory",
   "Employees",
   "Reports",
   "Notifications",

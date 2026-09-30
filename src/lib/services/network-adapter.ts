@@ -56,6 +56,30 @@ export interface NetworkAdapter {
    * scheduled to be.
    */
   setAccess(username: string, enabled: boolean): Promise<boolean>;
+
+  /**
+   * Creates the subscriber's PPPoE secret, or updates the parts of it that can
+   * change on an existing one.
+   *
+   * Separate from `setAccess` because the two answer different questions. This
+   * one is about a subscriber who does not exist on the router yet; `setAccess`
+   * is about one who does. Conflating them is how a new customer ends up with a
+   * disabled secret and nobody can work out why their line is dead.
+   */
+  provisionSecret(username: string, password: string, profile?: string): Promise<boolean>;
+
+  /** Repoints an existing secret at a different rate-limit profile. */
+  setSecretProfile(username: string, profile: string): Promise<boolean>;
+
+  /**
+   * Deletes the secret entirely, rather than disabling it.
+   *
+   * Used when a subscriber leaves for good. Leaving a disabled secret behind is
+   * not a neutral act: the next customer assigned the same address inherits
+   * somebody else's credentials.
+   */
+  removeSecret(username: string): Promise<boolean>;
+
   block(username: string, blocked: boolean): Promise<boolean>;
 }
 
@@ -104,6 +128,24 @@ export class DatabaseNetworkAdapter implements NetworkAdapter {
     return true;
   }
 
+  /**
+   * Simulated — nothing reaches a router, and `live` is false, so anything
+   * built on this adapter is labelled as such. Returning `true` here is
+   * deliberate: it means "there is no configured router to fail against", not
+   * "the customer's line works". Callers must not read it as the latter.
+   */
+  async provisionSecret(): Promise<boolean> {
+    return true;
+  }
+
+  async setSecretProfile(): Promise<boolean> {
+    return true;
+  }
+
+  async removeSecret(): Promise<boolean> {
+    return true;
+  }
+
   async block(): Promise<boolean> {
     return true;
   }
@@ -115,7 +157,7 @@ export class DatabaseNetworkAdapter implements NetworkAdapter {
  */
 export class MikrotikAdapter implements NetworkAdapter {
   readonly name = "MikroTik RouterOS";
-  readonly capabilities = "Active users, traffic, suspend/reconnect (PPP secret), block";
+  readonly capabilities = "Active users, traffic, suspend/reconnect, provision, profile, block";
   readonly live = true;
 
   /**
@@ -269,6 +311,48 @@ export class MikrotikAdapter implements NetworkAdapter {
   /** The IP a user last had, if we happen to know it from a live session. */
   private lastKnownIp(username: string): string | null {
     return this.knownIps.get(username) ?? null;
+  }
+
+  /**
+   * Creates or updates a PPPoE secret.
+   *
+   * Hotspot has nothing to provision: there is no secret, only a dynamically
+   * created user. Rather than return a success that did nothing, this says so,
+   * which puts the action in the queue where an operator can see it instead of
+   * discovering months later that no customer was ever configured.
+   */
+  async provisionSecret(
+    username: string,
+    password: string,
+    profile?: string
+  ): Promise<boolean> {
+    if (this.sessionSource === "hotspot") {
+      throw new RouterOsError(
+        `${username} cannot be provisioned on a hotspot router.`,
+        400,
+        "Hotspot creates users dynamically, so there is no secret to pre-create. Use PPPoE for subscribers who are provisioned up front."
+      );
+    }
+    // `disabled: false` is stated rather than left to the router's default. The
+    // default is `no`, so omitting it usually works — but "usually" is how a
+    // brand-new subscriber ends up provisioned and unable to connect, with
+    // nothing in the logs to explain it.
+    return this.client.upsertSecret({ name: username, password, profile, disabled: false });
+  }
+
+  async setSecretProfile(username: string, profile: string): Promise<boolean> {
+    if (this.sessionSource === "hotspot") {
+      throw new RouterOsError(
+        `${username} has no PPP secret on a hotspot router, so a profile cannot be set.`,
+        400
+      );
+    }
+    return this.client.setSecretProfile(username, profile);
+  }
+
+  async removeSecret(username: string): Promise<boolean> {
+    if (this.sessionSource === "hotspot") return true; // nothing was created
+    return this.client.removeSecret(username);
   }
 
   async block(username: string, blocked: boolean): Promise<boolean> {

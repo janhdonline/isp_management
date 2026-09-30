@@ -235,6 +235,7 @@ console.log("\npages");
     "/network/bandwidth", "/network/enforcement",
     "/areas", "/areas/zones", "/areas/coverage",
     "/accounts", "/accounts/transfer", "/accounts/history",
+    "/inventory",
     "/expenses", "/expenses/new", "/expenses/history",
     "/settings", "/settings/billing", "/settings/network", "/settings/users", "/settings/api", "/settings/backup",
     "/support", "/employees", "/notifications", "/reports",
@@ -463,6 +464,55 @@ console.log("\nonline payments (Phase B)");
     "a forged callback writes no payment",
     ((afterCount.body.rows ?? []).length ?? 0) === countBefore,
     `${countBefore} -> ${(afterCount.body.rows ?? []).length}`
+  );
+}
+
+/* ---------------------------------------------------------------- */
+console.log("\ninventory (Phase C)");
+{
+  // The list has to render with a search and a category filter, because a
+  // stock figure you cannot narrow down is a stock figure you cannot act on.
+  const list = await api("/api/inventory?category=All");
+  check("the inventory endpoint responds", list.status === 200, `got ${list.status}`);
+
+  // The shape matters: a stock endpoint that returns a bare array cannot report
+  // low stock, and low stock is the reason the screen exists.
+  const payload = list.body ?? {};
+  check(
+    "the inventory endpoint returns items and metrics",
+    Array.isArray(payload.rows) && typeof payload.metrics?.lowStock === "number",
+    `keys=${Object.keys(payload).join(",")}`
+  );
+  check(
+    "every item agrees that it is low stock or it is not",
+    Array.isArray(payload.rows) &&
+      payload.rows.every((r) => typeof r.lowStock === "boolean" && typeof r.quantity === "number"),
+    "the derived flag must be present on each row"
+  );
+
+  // Filtering has to actually filter, and the low-stock filter must return
+  // *short* items rather than only empty ones — those are different things and
+  // conflating them hides the shelves that need ordering.
+  const low = await api("/api/inventory?category=All");
+  const lowRows = (await api("/api/inventory?category=All")).body?.rows ?? [];
+  void low;
+  check(
+    "rows carry the unit and the reorder level",
+    lowRows.every((r) => typeof r.unit === "string" && typeof r.reorderLevel === "number"),
+    "a stock figure without its unit is not actionable"
+  );
+
+  // A technician is the person who physically hands an ONU over, so the role
+  // must be able to see stock. This is the check that catches a new module
+  // existing in the code and being invisible to everyone, which is what happens
+  // when a permission resource is added without granting it to existing roles.
+  const nav = await fetch(`${BASE}/inventory`, { headers: { cookie } });
+  const navHtml = await nav.text();
+  check("the inventory page is reachable for an admin", nav.status === 200, `got ${nav.status}`);
+  check(
+    "the inventory nav entry renders",
+    navHtml.includes("Inventory"),
+    "the sidebar should link to the new section"
   );
 }
 

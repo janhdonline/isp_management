@@ -12,6 +12,7 @@ import {
   BarChart3,
   Bell,
   Settings,
+  Boxes,
   type LucideIcon,
 } from "lucide-react";
 
@@ -134,6 +135,15 @@ export const NAV: NavItem[] = [
       { label: "Account List", href: "/accounts", permission: "accounts.view" },
       { label: "Transfer Fund", href: "/accounts/transfer", permission: "accounts.create" },
       { label: "Account History", href: "/accounts/history", permission: "accounts.view" },
+    ],
+  },
+  {
+    label: "Inventory",
+    href: "/inventory",
+    icon: Boxes,
+    permission: "inventory.view",
+    children: [
+      { label: "Items", href: "/inventory", permission: "inventory.view" },
     ],
   },
   {

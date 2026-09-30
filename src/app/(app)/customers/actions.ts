@@ -8,10 +8,16 @@ import { customerSchema, customerUpdateSchema, fieldErrors, FieldErrors } from "
 import { nextNumber, Tx } from "@/lib/counter";
 import { getSettings } from "@/lib/settings";
 import { addDays, round2, startOfDay } from "@/lib/utils";
-import { prismaLog } from "@/lib/services/activity";
+import { logActivity, prismaLog } from "@/lib/services/activity";
 import { changePackage, deleteCustomer, disconnectCustomer, reconnectCustomer, renewCustomer, suspendCustomer } from "@/lib/services/customers";
 import { syncCustomerBilling } from "@/lib/services/billing";
-import { enforceReconnect, enforceSuspend } from "@/lib/services/network-enforcement";
+import {
+  enforceProvision,
+  enforceReconnect,
+  enforceRemoveSecret,
+  enforceSetProfile,
+  enforceSuspend,
+} from "@/lib/services/network-enforcement";
 
 export type FormState = {
   errors?: FieldErrors;
@@ -128,17 +134,79 @@ export async function createCustomerAction(
 
   await syncCustomerBilling(result.id);
 
+  // Router provisioning happens after the commit, never inside it. Two reasons,
+  // and both matter: a router call held open across a transaction holds a
+  // connection and a row lock for as long as the router takes to answer, and the
+  // office must be able to enter a customer even when the router is down. If the
+  // call fails the action is queued and the retry job carries it out.
+  const provisioned = await maybeProvisionOnRouter(result, session.id);
+
   revalidatePath("/customers");
   revalidatePath("/dashboard");
+  revalidatePath("/network");
+
+  const suffix = provisioned.queued
+    ? " Router provisioning is queued and will be retried automatically."
+    : "";
 
   const intent = formData.get("_intent");
   if (intent === "invoice") {
     redirect(`/billing/invoices/new?customerId=${result.id}`);
   }
   if (intent === "new") {
-    return { success: `Customer ${result.customerCode} created.` };
+    return { success: `Customer ${result.customerCode} created.${suffix}` };
   }
   redirect(`/customers/${result.id}`);
+}
+
+/**
+ * Creates the PPPoE secret for a brand-new customer, when that makes sense.
+ *
+ * Three cases are declined on purpose, each reported rather than passed over:
+ *
+ *  - no router is chosen yet — there is nowhere to provision, and a customer
+ *    added before the office knows which router serves them is normal;
+ *  - the router terminates hotspot, which has no secret to create;
+ *  - enforcement is switched off in Settings.
+ *
+ * Anything that *can* be provisioned is, and anything that fails is queued. The
+ * customer is never blocked on a router.
+ */
+async function maybeProvisionOnRouter(
+  customer: { id: string; routerId: string | null },
+  userId: string
+): Promise<{ queued: boolean; note: string }> {
+  if (!customer.routerId) {
+    return { queued: false, note: "No router selected, so nothing was provisioned." };
+  }
+
+  const router = await prisma.router.findUnique({
+    where: { id: customer.routerId },
+    select: { name: true, sessionSource: true },
+  });
+  if (!router) return { queued: false, note: "The chosen router no longer exists." };
+
+  if (router.sessionSource === "hotspot") {
+    await logActivity(
+      {
+        action: "Skip",
+        entity: "Customer",
+        entityId: customer.id,
+        summary: `Router provisioning skipped: ${router.name} terminates hotspot, which has no PPP secret to create`,
+      },
+      userId
+    );
+    return { queued: false, note: `${router.name} is a hotspot router, so no secret was created.` };
+  }
+
+  const result = await enforceProvision(customer.id, userId);
+  if (result.ok) return { queued: false, note: result.detail };
+  // Queued rather than failed: the retry job will carry it out, and the queue
+  // page shows it if it does not.
+  return {
+    queued: result.queued ?? true,
+    note: result.detail,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -304,21 +372,79 @@ export async function changePackageAction(
   reason: string
 ): Promise<FormState> {
   if (!packageId) return { formError: "Select a package." };
-  return runLifecycle(
+
+  // Read both profiles *before* the change, so the router is only touched when
+  // the rate limit actually differs. Repointing a secret to the profile it
+  // already has is a wasted write and, on a busy router, a wasted lock.
+  const before = await prisma.customer.findUnique({
+    where: { id },
+    select: { package: { select: { mikrotikProfile: true } } },
+  });
+  const next = await prisma.package.findUnique({
+    where: { id: packageId },
+    select: { mikrotikProfile: true },
+  });
+
+  const result = await runLifecycle(
     "customers.edit",
     (tx, userId) => changePackage(tx, id, packageId, reason || "Package changed", userId),
-    ["/customers", `/customers/${id}`, "/dashboard"],
+    ["/customers", `/customers/${id}`, "/dashboard", "/network"],
     "Package changed."
   );
+
+  if (!result.success) return result;
+
+  const oldProfile = before?.package?.mikrotikProfile ?? null;
+  const newProfile = next?.mikrotikProfile ?? null;
+
+  if (!newProfile) {
+    // No profile on the new package. Nothing is applied rather than clearing the
+    // one the customer has, because silently removing a rate limit is a bigger
+    // change than the operator asked for.
+    return {
+      success: `${result.success} The new package has no MikroTik profile, so the router speed was left as it is.`,
+    };
+  }
+  if (oldProfile === newProfile) return result;
+
+  const applied = await enforceSetProfile(id, newProfile);
+  if (!applied.ok) {
+    return {
+      success: `${result.success} The router profile was not changed: ${applied.detail} It is queued and will be retried.`,
+    };
+  }
+  return result;
 }
 
 export async function deleteCustomerAction(id: string): Promise<FormState> {
   try {
     const session = await requirePermission("customers.delete");
+
+    // Read the username before the row goes, so the router can be told even
+    // though the customer record will not exist to retry against.
+    const customer = await prisma.customer.findUnique({
+      where: { id },
+      select: { username: true, routerId: true },
+    });
+
     await deleteCustomer(id, session.id);
+
+    // Best effort. The customer is gone either way, and refusing to delete
+    // because a router is unreachable would leave the office unable to clear a
+    // record they need gone. A disabled-but-present secret is a nuisance; a
+    // live one is a working line someone is still using for free.
+    let note = "";
+    if (customer?.username) {
+      const removed = await enforceRemoveSecret(id, session.id);
+      if (!removed.ok) {
+        note = ` The router was not reached (${removed.detail}) — that secret should be removed by hand.`;
+      }
+    }
+
     revalidatePath("/customers");
     revalidatePath("/dashboard");
-    return { success: "Customer deleted." };
+    revalidatePath("/network");
+    return { success: `Customer deleted.${note}` };
   } catch (e) {
     return { formError: e instanceof Error ? e.message : "Delete failed" };
   }
