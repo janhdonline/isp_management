@@ -2,7 +2,8 @@
 
 /* ==========================================================================
    ISP Management System - Design tokens
-   Semantic tokens so every module reads the same visual language.
+   "Gold + Pine" theme: deep teal-green surfaces, gold accents, cream cards
+   on a light sage canvas. Matches the approved gold/teal mockup.
    ========================================================================== */
 
 @theme {
@@ -11,72 +12,92 @@
 
   --radius-card: 1.25rem;
 
-  /* Neumorphic accent gradient */
-  --neu-accent-from: #5b8cff;
-  --neu-accent-to: #8b5cf6;
+  /* Gold — primary accent (CTAs, highlights, active pills) */
+  --color-gold-50: #fbf4e3;
+  --color-gold-100: #f6e8c8;
+  --color-gold-200: #eed59c;
+  --color-gold-300: #e3be6e;
+  --color-gold-400: #d7a94b;
+  --color-gold-500: #c9973b;
+  --color-gold-600: #ab7e2c;
+  --color-gold-700: #876427;
+  --color-gold-800: #6d5124;
+  --color-gold-900: #5b4422;
+  --color-gold-950: #33260f;
 
-  /* Brand */
-  --color-brand-50: #eef4ff;
-  --color-brand-100: #d9e5ff;
-  --color-brand-200: #bcd2ff;
-  --color-brand-300: #8eb5ff;
-  --color-brand-400: #598eff;
-  --color-brand-500: #3163ff;
-  --color-brand-600: #1c3cf5;
-  --color-brand-700: #182ce1;
-  --color-brand-800: #1a27b6;
-  --color-brand-900: #1c268f;
-  --color-brand-950: #141a57;
+  /* Pine — deep teal-green (sidebar, ink, secondary accents) */
+  --color-pine-50: #f2f6f5;
+  --color-pine-100: #e0eae8;
+  --color-pine-200: #c2d6d2;
+  --color-pine-300: #9abbb5;
+  --color-pine-400: #6e9c94;
+  --color-pine-500: #4e8078;
+  --color-pine-600: #3b665f;
+  --color-pine-700: #31534e;
+  --color-pine-800: #2a4643;
+  --color-pine-900: #24403c;
+  --color-pine-950: #122825;
+
+  /* Brand maps to gold so every primary CTA follows the mockup */
+  --color-brand-50: #fbf4e3;
+  --color-brand-100: #f6e8c8;
+  --color-brand-200: #eed59c;
+  --color-brand-300: #e3be6e;
+  --color-brand-400: #d7a94b;
+  --color-brand-500: #c9973b;
+  --color-brand-600: #ab7e2c;
+  --color-brand-700: #876427;
+  --color-brand-800: #6d5124;
+  --color-brand-900: #5b4422;
+  --color-brand-950: #33260f;
 
   /* Sidebar */
-  --color-side-50: #f8fafc;
-  --color-side-100: #f1f5f9;
-  --color-side-200: #e2e8f0;
-  --color-side-600: #475569;
-  --color-side-700: #334155;
-  --color-side-800: #1e293b;
-  --color-side-900: #0f172a;
-  --color-side-950: #020617;
+  --color-side-50: #f2f6f5;
+  --color-side-100: #e0eae8;
+  --color-side-200: #c2d6d2;
+  --color-side-600: #3b665f;
+  --color-side-700: #31534e;
+  --color-side-800: #2a4643;
+  --color-side-900: #24403c;
+  --color-side-950: #122825;
 }
 
 :root {
-  --surface: #e9edf4;
-  --surface-2: #dfe4ec;
-  --surface-3: #d3dae6;
-  --border: #ccd4e0;
-  --border-strong: #b9c2d2;
-  --fg: #0f172a;
-  --fg-muted: #5b6b82;
-  --fg-subtle: #8b98ad;
-  --ring: #5b8cff;
-  --sidebar: #0f172a;
-  --sidebar-fg: #cbd5e1;
-  --sidebar-active: #ffffff;
-  --sidebar-hover: #1e293b;
-  /* Neumorphic (soft-UI) shadow palette */
-  --neu-bg: #dfe4ec;
-  --neu-dark: #b3bccb;
-  --neu-light: #ffffff;
+  --surface: #fdfbf5;      /* cream cards */
+  --surface-2: #d9e7e3;    /* sage page canvas */
+  --surface-3: #f3ecdb;    /* warm tinted wells */
+  --border: #e8dfc8;
+  --border-strong: #d9cba6;
+  --fg: #21302d;
+  --fg-muted: #5b6e6a;
+  --fg-subtle: #93a5a0;
+  --ring: #c9973b;
+  --sidebar: #24403c;
+  --sidebar-fg: #e9e2ce;
+  --sidebar-active: #fdfbf5;
+  --sidebar-hover: #2e544f;
+
+  --shadow-card: 0 10px 30px -12px rgb(36 64 60 / 0.18), 0 2px 6px -2px rgb(36 64 60 / 0.08);
+  --shadow-card-hover: 0 16px 38px -12px rgb(36 64 60 / 0.24), 0 4px 10px -2px rgb(36 64 60 / 0.1);
 }
 
 .dark {
-  --surface: #0b1120;
-  --surface-2: #0f172a;
-  --surface-3: #1e293b;
-  --border: #1e293b;
-  --border-strong: #334155;
-  --fg: #e2e8f0;
-  --fg-muted: #94a3b8;
-  --fg-subtle: #64748b;
-  --ring: #5b8cff;
-  --sidebar: #020617;
-  --sidebar-fg: #94a3b8;
-  --sidebar-active: #ffffff;
-  --sidebar-hover: #1e293b;
-  /* Neumorphic dark variant */
-  --neu-bg: #141926;
-  --neu-dark: #080b12;
-  --neu-light: #242f47;
+  --surface: #16211f;
+  --surface-2: #0f1a18;
+  --surface-3: #1e2d2a;
+  --border: #2a3b37;
+  --border-strong: #3a4f4a;
+  --fg: #ede8d8;
+  --fg-muted: #a9b8b3;
+  --fg-subtle: #7e918c;
+  --ring: #d7a94b;
+  --sidebar: #0c1514;
+  --sidebar-fg: #cfc8ae;
+  --sidebar-active: #ede8d8;
+  --sidebar-hover: #1a2825;
+
+  --shadow-card: 0 10px 30px -12px rgb(0 0 0 / 0.5), 0 2px 6px -2px rgb(0 0 0 / 0.3);
+  --shadow-card-hover: 0 16px 38px -12px rgb(0 0 0 / 0.6), 0 4px 10px -2px rgb(0 0 0 / 0.35);
 }
 
 @theme inline {
@@ -91,6 +112,7 @@
   --color-sidebar: var(--sidebar);
   --color-sidebar-fg: var(--sidebar-fg);
   --color-sidebar-hover: var(--sidebar-hover);
+  --color-sidebar-active: var(--sidebar-active);
 }
 
 * {
@@ -105,7 +127,13 @@ html.dark {
 }
 
 body {
-  background: var(--surface-2);
+  /* Sage canvas with soft gold aura blobs, like the mockup backdrop */
+  background:
+    radial-gradient(640px 640px at -8% -10%, rgb(201 151 59 / 0.28), transparent 62%),
+    radial-gradient(760px 760px at 108% 112%, rgb(201 151 59 / 0.2), transparent 62%),
+    radial-gradient(520px 520px at 88% -12%, rgb(78 128 120 / 0.14), transparent 60%),
+    var(--surface-2);
+  background-attachment: fixed;
   color: var(--fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
@@ -134,86 +162,15 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
 }
 
-/* ==========================================================================
-   Neumorphic (soft-UI) primitives
-   ========================================================================== */
-
-/** Raised soft surface — the default card look. */
-@utility neu {
-  background: var(--neu-bg);
-  border: none;
-  box-shadow:
-    7px 7px 16px var(--neu-dark),
-    -7px -7px 16px var(--neu-light);
+@utility card-hover {
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
 }
-
-/** Smaller raised surface — buttons, pills, chips. */
-@utility neu-sm {
-  background: var(--neu-bg);
-  border: none;
-  box-shadow:
-    4px 4px 10px var(--neu-dark),
-    -4px -4px 10px var(--neu-light);
-}
-
-/** Pressed-in surface — search fields, toggles-off, sliders. */
-@utility neu-inset {
-  background: var(--neu-bg);
-  border: none;
-  box-shadow:
-    inset 4px 4px 10px var(--neu-dark),
-    inset -4px -4px 10px var(--neu-light);
-}
-
-/** Tactile press: extruded -> inset on :active. Pair with neu / neu-sm. */
-@utility neu-press {
-  transition:
-    box-shadow 0.15s ease-out,
-    transform 0.15s ease-out;
-  &:active {
-    box-shadow:
-      inset 4px 4px 10px var(--neu-dark),
-      inset -4px -4px 10px var(--neu-light);
-    transform: scale(0.98);
-  }
-}
-
-/** Brand gradient (blue -> purple) for primary actions / active states. */
-@utility neu-gradient {
-  background: linear-gradient(135deg, var(--neu-accent-from), var(--neu-accent-to));
-}
-
-/** Staggered rise-in for card grids (apply to the grid parent). */
-.stagger-rise > * {
-  animation: isp-fade-in 0.32s ease-out both;
-}
-.stagger-rise > *:nth-child(2) {
-  animation-delay: 0.06s;
-}
-.stagger-rise > *:nth-child(3) {
-  animation-delay: 0.12s;
-}
-.stagger-rise > *:nth-child(4) {
-  animation-delay: 0.18s;
-}
-.stagger-rise > *:nth-child(5) {
-  animation-delay: 0.24s;
-}
-.stagger-rise > *:nth-child(6) {
-  animation-delay: 0.3s;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .stagger-rise > *,
-  .animate-in-up,
-  .animate-slide-in {
-    animation: none !important;
-  }
-  .neu-press {
-    transition: none;
-  }
+.card-hover:hover {
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-2px);
 }
 
 @utility focus-ring {
@@ -241,6 +198,22 @@ body {
 
 @utility animate-in-up {
   animation: isp-fade-in 0.22s ease-out both;
+}
+
+@keyframes isp-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Staggered entrance for dashboard cards — delay via inline style */
+@utility animate-rise {
+  animation: isp-rise-in 0.45s cubic-bezier(0.22, 0.9, 0.3, 1) both;
 }
 
 @keyframes isp-slide-in {
@@ -284,6 +257,19 @@ body {
   animation: isp-shimmer 1.4s infinite;
 }
 
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .animate-in-up,
+  .animate-rise,
+  .animate-slide-in,
+  .skeleton::after {
+    animation: none;
+  }
+  .card-hover:hover {
+    transform: none;
+  }
+}
+
 @media print {
   .no-print {
     display: none !important;
@@ -291,11 +277,7 @@ body {
   body {
     background: #fff;
   }
-  .neu,
-  .neu-sm,
-  .neu-inset {
+  .card {
     box-shadow: none;
-    border: 1px solid #d7dce4;
-    background: #fff;
   }
 }

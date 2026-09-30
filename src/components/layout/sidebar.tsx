@@ -16,6 +16,8 @@ export function Sidebar({
   isAdmin,
   mobileOpen,
   onCloseMobile,
+  userName,
+  userEmail,
 }: {
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -24,6 +26,8 @@ export function Sidebar({
   isAdmin: boolean;
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  userName?: string;
+  userEmail?: string;
 }) {
   const pathname = usePathname();
 
@@ -70,19 +74,23 @@ export function Sidebar({
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex max-lg:w-64 flex-col bg-sidebar text-sidebar-fg",
-          "transition-[width,transform] duration-200 lg:static lg:translate-x-0",
-          collapsed ? "lg:w-16" : "lg:w-64",
+          "fixed inset-y-0 left-0 z-50 flex max-lg:w-72 flex-col bg-sidebar text-sidebar-fg shadow-2xl",
+          "transition-[width,transform,border-radius,margin] duration-300 ease-out lg:static lg:translate-x-0",
+          "max-lg:rounded-r-[1.75rem]",
+          collapsed ? "lg:w-20" : "lg:w-68",
+          // Floating rounded panel on desktop, like the mockup
+          "lg:my-3 lg:ml-3 lg:max-h-[calc(100vh-1.5rem)] lg:rounded-[1.75rem]",
+          collapsed && "lg:items-center",
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
         <div
           className={cn(
-            "flex h-16 shrink-0 items-center gap-2.5 px-4",
+            "flex h-16 shrink-0 items-center gap-2.5 px-4 pt-1",
             collapsed && "lg:justify-center lg:px-2"
           )}
         >
-          <span className="neu-gradient flex size-8 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white shadow-[3px_3px_8px_rgba(0,0,0,0.35)]">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-2xl bg-gold-500 text-base font-bold text-pine-950 shadow-sm">
             N
           </span>
           {!collapsed ? (
@@ -97,7 +105,7 @@ export function Sidebar({
           <button
             onClick={onToggleCollapse}
             className={cn(
-              "hidden size-7 shrink-0 items-center justify-center rounded-md text-sidebar-fg/60",
+              "hidden size-7 shrink-0 items-center justify-center rounded-full text-sidebar-fg/60",
               "transition-colors hover:bg-sidebar-hover hover:text-sidebar-active",
               "lg:flex",
               !collapsed && "ml-auto"
@@ -114,7 +122,22 @@ export function Sidebar({
           </button>
         </div>
 
-        <nav className="flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden px-2 pb-4">
+        {/* Profile card, like the mockup */}
+        {!collapsed && userName ? (
+          <div className="mx-3 mb-2 flex shrink-0 items-center gap-3 rounded-2xl bg-white/5 px-3 py-2.5 ring-1 ring-inset ring-white/10">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-gold-500/20 text-sm font-semibold text-gold-300 ring-2 ring-gold-500/60">
+              {userName.trim().charAt(0).toUpperCase()}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-semibold text-sidebar-active">{userName}</p>
+              {userEmail ? (
+                <p className="truncate text-[11px] text-sidebar-fg/60">{userEmail}</p>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        <nav className="flex-1 space-y-1 overflow-y-auto overflow-x-hidden px-3 pb-4">
           {visible.map((item) => {
             const isUnder = isActivePath(pathname, item.href);
             // A parent that merely contains the current page should not wear the
@@ -143,24 +166,29 @@ export function Sidebar({
               <div key={item.href}>
                 <div
                   className={cn(
-                    "group flex items-center rounded-xl transition-all",
-                    active
-                      ? "neu-gradient text-white shadow-[3px_3px_10px_rgba(0,0,0,0.35)]"
-                      : isUnder
-                        ? "text-sidebar-active"
-                        : "text-sidebar-fg hover:bg-sidebar-hover hover:text-sidebar-active"
+                    "group flex items-center transition-all duration-200",
+                    active &&
+                      (collapsed
+                        ? "rounded-full bg-sidebar-active text-pine-900"
+                        : "-mr-3 rounded-l-full bg-sidebar-active text-pine-900"),
+                    !active &&
+                      (isUnder
+                        ? "rounded-full text-sidebar-active"
+                        : "rounded-full text-sidebar-fg/80 hover:bg-sidebar-hover hover:text-sidebar-active")
                   )}
                 >
                   <Link
                     href={item.href}
                     onClick={handleItemClick}
                     className={cn(
-                      "flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium",
-                      !hasChildren && "pr-2.5"
+                      "flex min-w-0 flex-1 items-center gap-2.5 rounded-full px-3 text-sm font-medium",
+                      active ? "py-[18px]" : "py-2",
+                      !hasChildren && "pr-3",
+                      collapsed && "lg:justify-center lg:px-0"
                     )}
                     title={collapsed ? item.label : undefined}
                   >
-                    <Icon className="size-4.5 shrink-0" />
+                    <Icon className={cn("size-4.5 shrink-0", active ? "text-pine-900" : "text-gold-400/90")} />
                     {!collapsed ? <span className="flex-1 truncate">{item.label}</span> : null}
                   </Link>
 
@@ -190,7 +218,7 @@ export function Sidebar({
                 </div>
 
                 {hasChildren && isOpen && !collapsed ? (
-                  <div className="ml-4 space-y-0.5 border-l border-sidebar-fg/15 pl-2.5 pt-1">
+                  <div className="ml-5 space-y-0.5 border-l border-gold-400/25 pl-3 pt-1">
                     {children.map((child) => {
                       const childActive = pathname === child.href || pathname.startsWith(child.href + "/");
                       return (
@@ -199,9 +227,9 @@ export function Sidebar({
                           href={child.href}
                           onClick={onCloseMobile}
                           className={cn(
-                            "block truncate rounded-lg px-2.5 py-1.5 text-[13px] transition-all",
+                            "block truncate rounded-full px-3 py-1.5 text-[13px] transition-colors",
                             childActive
-                              ? "neu-gradient font-medium text-white"
+                              ? "bg-gold-500 font-medium text-pine-950 shadow-sm"
                               : "text-sidebar-fg/75 hover:bg-sidebar-hover hover:text-sidebar-active"
                           )}
                         >

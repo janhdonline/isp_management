@@ -58,17 +58,17 @@ export function Topbar({
   const notificationCount = alerts.expiringToday + alerts.expired + alerts.openTickets;
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 bg-[var(--neu-bg)] px-3 sm:px-4">
+    <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 bg-transparent px-3 sm:px-4">
       <button
         onClick={onOpenMobile}
         aria-label="Open menu"
-        className="neu-sm neu-press flex size-9 items-center justify-center rounded-full text-fg-muted"
+        className="flex size-9 items-center justify-center rounded-full bg-[var(--surface)] text-fg-muted shadow-sm transition-all hover:shadow lg:hidden"
       >
         <Menu className="size-5" />
       </button>
 
       <div className="hidden items-center gap-2 lg:flex">
-        <span className="text-sm font-semibold">ISP Management</span>
+        <span className="text-sm font-semibold text-pine-900 dark:text-[var(--fg)]">ISP Management</span>
       </div>
 
       <div className="mx-2 hidden min-w-0 max-w-md flex-1 md:block">
@@ -82,15 +82,15 @@ export function Topbar({
         />
       </div>
 
-      <div className="ml-auto flex items-center gap-1">
+      <div className="ml-auto flex items-center gap-1.5">
         <DropdownMenu
           align="right"
           items={quickActions}
-          buttonClassName="hidden h-9 w-auto gap-1.5 px-2.5 sm:flex"
+          buttonClassName="hidden h-10 w-auto gap-1.5 rounded-full bg-gold-500 px-4 text-pine-950 shadow-md transition-all hover:bg-gold-600 hover:shadow-lg sm:flex"
           trigger={
             <>
-              <Plus className="size-4" />
-              <span className="text-sm font-medium">Quick Add</span>
+              <Plus className="size-4" strokeWidth={2.5} />
+              <span className="text-sm font-semibold">Quick Add</span>
             </>
           }
         />
@@ -105,7 +105,7 @@ export function Topbar({
             { label: `Suspended: ${alerts.suspended}`, onSelect: () => router.push("/customers/status/suspended") },
             { label: `Open tickets: ${alerts.openTickets}`, onSelect: () => router.push("/support/tickets") },
           ]}
-          buttonClassName="relative size-9"
+          buttonClassName="relative size-10 rounded-full bg-[var(--surface)] shadow-sm transition-all hover:shadow"
           trigger={<Bell className="size-4.5" />}
         />
         {notificationCount > 0 ? (
@@ -115,20 +115,18 @@ export function Topbar({
         <button
           onClick={toggle}
           aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          className="neu-sm neu-press flex size-9 items-center justify-center rounded-full text-fg-muted"
+          className="flex size-10 items-center justify-center rounded-full bg-[var(--surface)] text-fg-muted shadow-sm transition-all hover:shadow"
         >
           {theme === "dark" ? <Sun className="size-4.5" /> : <Moon className="size-4.5" />}
         </button>
 
-        <div className="mx-1 h-6 w-px bg-[var(--border)]" />
-
         <DropdownMenu
           align="right"
           items={userMenu}
-          buttonClassName="h-9 w-auto gap-2 px-1.5"
+          buttonClassName="h-10 w-auto gap-2 rounded-full bg-[var(--surface)] py-1 pl-1 pr-2.5 shadow-sm transition-all hover:shadow"
           trigger={
             <>
-              <Avatar name={user.name} className="size-7" />
+              <Avatar name={user.name} className="size-8" />
               <span className="hidden text-sm font-medium sm:inline">{user.name}</span>
               <svg viewBox="0 0 24 24" className="size-3.5 text-fg-subtle" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="m6 9 6 6 6-6" />

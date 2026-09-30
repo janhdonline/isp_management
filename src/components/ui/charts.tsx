@@ -275,16 +275,16 @@ export function ChartLegend({ data }: { data: { label: string; value: number; co
 }
 
 export const CHART_COLORS = [
-  "#3163ff",
-  "#10b981",
-  "#f59e0b",
-  "#8b5cf6",
-  "#0ea5e9",
-  "#f43f5e",
-  "#14b8a6",
-  "#a855f7",
-  "#eab308",
-  "#64748b",
+  "#3b665f", // pine
+  "#c9973b", // gold
+  "#4e8078", // pine light
+  "#e3be6e", // gold light
+  "#2a4643", // pine deep
+  "#ab7e2c", // gold deep
+  "#e8a33d", // amber
+  "#f43f5e", // rose (alerts)
+  "#0ea5e9", // sky (info)
+  "#94a3b8", // slate (neutral)
 ];
 
 export function ChartFrame({ children, className }: { children: React.ReactNode; className?: string }) {

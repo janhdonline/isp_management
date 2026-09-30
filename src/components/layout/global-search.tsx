@@ -106,24 +106,24 @@ export function GlobalSearch({
           }
         }}
         placeholder={placeholder}
-        className="neu-inset h-10 w-full rounded-full pl-10 pr-16 text-sm text-[var(--fg)] placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-brand-500/25"
+        className="h-10 w-full rounded-full border border-transparent bg-[var(--surface)] pl-10 pr-16 text-sm text-[var(--fg)] shadow-md placeholder:text-fg-subtle focus:border-gold-400 focus:outline-none focus:ring-2 focus:ring-gold-500/25"
       />
       {value ? (
         <button
           onClick={() => onChange("")}
           aria-label="Clear"
-          className="absolute right-2 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-fg-subtle hover:bg-[var(--surface-3)]"
+          className="absolute right-2 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded text-fg-subtle hover:bg-[var(--surface-3)]"
         >
           <X className="size-3.5" />
         </button>
       ) : (
-        <kbd className="neu-inset pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded-full px-2 py-0.5 text-[10px] font-medium text-fg-subtle sm:block">
+        <kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 rounded border border-[var(--border-strong)] px-1.5 py-0.5 text-[10px] font-medium text-fg-subtle sm:block">
           ⌘K
         </kbd>
       )}
 
       {open && value.trim().length >= 2 ? (
-        <div className="neu animate-in-up absolute left-0 right-0 top-12 z-50 overflow-hidden rounded-3xl">
+        <div className="animate-in-up absolute left-0 right-0 top-12 z-50 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-xl">
           {loading ? (
             <p className="px-3 py-4 text-center text-xs text-fg-muted">Searching...</p>
           ) : hits.length === 0 ? (

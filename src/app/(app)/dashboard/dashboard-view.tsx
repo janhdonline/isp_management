@@ -59,7 +59,7 @@ const QUICK_ACTIONS = [
 ];
 
 function GroupLabel({ children }: { children: React.ReactNode }) {
-  return <h2 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">{children}</h2>;
+  return <h2 className="text-xs font-semibold uppercase tracking-[0.08em] text-pine-700 dark:text-fg-muted">{children}</h2>;
 }
 
 export function DashboardView({
@@ -98,7 +98,7 @@ export function DashboardView({
       header: "Invoice",
       cell: (r) =>
         r.invoice ? (
-          <Link href={`/billing/invoices/${r.invoice.invoiceNumber}`} className="font-mono text-xs hover:text-brand-600">
+          <Link href={`/billing/invoices/${r.invoice.invoiceNumber}`} className="font-mono text-xs hover:text-gold-700">
             {r.invoice.invoiceNumber}
           </Link>
         ) : (
@@ -110,7 +110,7 @@ export function DashboardView({
       key: "customer",
       header: "Customer",
       cell: (r) => (
-        <Link href={`/customers/${r.customer.id}`} className="font-medium hover:text-brand-600">
+        <Link href={`/customers/${r.customer.id}`} className="font-medium hover:text-gold-700">
           {r.customer.name}
         </Link>
       ),
@@ -128,7 +128,7 @@ export function DashboardView({
       key: "customer",
       header: "Customer",
       cell: (r) => (
-        <Link href={`/customers/${r.id}`} className="hover:text-brand-600">
+        <Link href={`/customers/${r.id}`} className="hover:text-gold-700">
           {r.name}
         </Link>
       ),
@@ -147,7 +147,7 @@ export function DashboardView({
       header: "Customer",
       cell: (r) => (
         <div className="min-w-0">
-          <Link href={`/customers/${r.id}`} className="block truncate font-medium hover:text-brand-600">
+          <Link href={`/customers/${r.id}`} className="block truncate font-medium hover:text-gold-700">
             {r.name}
           </Link>
           <span className="block truncate font-mono text-[11px] text-fg-subtle">{r.username}</span>
@@ -173,7 +173,7 @@ export function DashboardView({
       header: "",
       align: "right",
       cell: (r) => (
-        <Link href={`/billing/payments/new?customerId=${r.id}`} className="text-xs font-medium text-brand-600 hover:underline">
+        <Link href={`/billing/payments/new?customerId=${r.id}`} className="text-xs font-medium text-gold-700 font-medium hover:underline">
           Renew
         </Link>
       ),
@@ -196,7 +196,7 @@ export function DashboardView({
             success("Dashboard refreshed", "Reloaded the latest figures.");
           }}
           disabled={isPending}
-          className="neu-sm neu-press inline-flex h-10 shrink-0 items-center gap-2 self-start rounded-full px-4 text-sm font-medium disabled:opacity-60"
+          className="inline-flex h-10 shrink-0 items-center gap-2 self-start rounded-full border border-[var(--border-strong)] bg-[var(--surface)] px-4 text-sm font-medium shadow-sm transition-all hover:shadow disabled:opacity-60"
         >
           <RefreshCcw className={isPending ? "size-4 animate-spin" : "size-4"} />
           Refresh
@@ -204,24 +204,24 @@ export function DashboardView({
       </div>
 
       {/* quick actions */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {QUICK_ACTIONS.map((a) => (
           <Link
             key={a.href}
             href={a.href}
-            className="neu-sm neu-press flex items-center gap-2.5 rounded-full px-4 py-3 text-sm font-medium"
+            className="flex items-center gap-2.5 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3.5 py-3 text-sm font-medium shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-gold-400 hover:shadow-md dark:hover:border-gold-500"
           >
-            <a.icon className="size-4 shrink-0 text-[#6d6df5]" />
+            <a.icon className="size-4 shrink-0 text-gold-700" />
             <span className="truncate">{a.label}</span>
           </Link>
         ))}
       </div>
 
       {/* customers */}
-      <section className="space-y-2">
+      <section className="space-y-2 animate-rise" style={{ animationDelay: "0ms" }}>
         <GroupLabel>Customers</GroupLabel>
         <StatCardGrid>
-          <StatCard label="Total Customers" value={formatNumber(c.totalCustomers)} icon={Users} tone="brand" href="/customers" hint="All records" />
+          <StatCard label="Total Customers" value={formatNumber(c.totalCustomers)} icon={Users} tone="gold" href="/customers" hint="All records" />
           <StatCard label="Active Customers" value={formatNumber(c.activeCustomers)} icon={CircleDollarSign} tone="success" href="/customers/status/active" hint="Connection active" />
           <StatCard label="Online Now" value={formatNumber(c.onlineNow)} icon={Wifi} tone="info" href="/customers/online" hint="Live sessions" />
           <StatCard label="Offline" value={formatNumber(c.offline)} icon={WifiOff} tone="neutral" href="/customers/offline" hint="Not connected" />
@@ -229,18 +229,18 @@ export function DashboardView({
       </section>
 
       {/* finance */}
-      <section className="space-y-2">
+      <section className="space-y-2 animate-rise" style={{ animationDelay: "60ms" }}>
         <GroupLabel>Finance</GroupLabel>
         <StatCardGrid>
           <StatCard label="Today's Collection" value={formatCurrency(c.todayCollection)} icon={Banknote} tone="success" href="/billing/payments" hint={`${stats.payment.todayCount} transactions`} />
-          <StatCard label="Monthly Collection" value={formatCurrency(c.monthlyCollection)} icon={TrendingUp} tone="brand" hint={`${stats.payment.monthCount} transactions`} />
+          <StatCard label="Monthly Collection" value={formatCurrency(c.monthlyCollection)} icon={TrendingUp} tone="gold" hint={`${stats.payment.monthCount} transactions`} />
           <StatCard label="Total Due" value={formatCurrency(c.totalDue)} icon={AlertTriangle} tone="danger" href="/customers/due" hint="Across all customers" />
           <StatCard label="Monthly Expense" value={formatCurrency(c.monthlyExpense)} icon={Wallet} tone="warning" href="/expenses" hint={`Net ${formatCurrency(stats.finance.profit)}`} />
         </StatCardGrid>
       </section>
 
       {/* alerts */}
-      <section className="space-y-2">
+      <section className="space-y-2 animate-rise" style={{ animationDelay: "120ms" }}>
         <GroupLabel>Alerts</GroupLabel>
         <StatCardGrid>
           <StatCard label="Expiring Today" value={formatNumber(stats.alerts.expiringToday)} icon={CalendarClock} tone="warning" href="/customers/expiring" hint={`${stats.alerts.expiringWeek} within 7 days`} />
@@ -251,7 +251,7 @@ export function DashboardView({
       </section>
 
       {/* charts */}
-      <section className="space-y-2">
+      <section className="space-y-2 animate-rise" style={{ animationDelay: "180ms" }}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <GroupLabel>Analytics</GroupLabel>
           <DateRangePicker className="no-print" defaultPreset={range} />
@@ -264,7 +264,7 @@ export function DashboardView({
               description="Money received in the selected period"
               icon={<TrendingUp />}
               action={
-                <div className="neu-inset flex gap-1 rounded-full p-1">
+                <div className="flex gap-1">
                   {[
                     ["today", "Today"],
                     ["week", "Week"],
@@ -276,7 +276,7 @@ export function DashboardView({
                       onClick={() => onRange(v)}
                       className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${
                         rangeValue === v && v !== "custom"
-                          ? "neu-gradient text-white shadow-[3px_3px_8px_var(--neu-dark),-3px_-3px_8px_var(--neu-light)]"
+                          ? "bg-gold-500 text-pine-950 shadow-sm"
                           : "text-fg-muted hover:text-[var(--fg)]"
                       }`}
                     >
@@ -288,7 +288,7 @@ export function DashboardView({
             />
             <CardBody className="pb-2">
               {hasCollection ? (
-                <TrendChart data={charts.collection} series={[{ key: "value", label: "Collected", color: "#7c6df2", type: "area" }]} money />
+                <TrendChart data={charts.collection} series={[{ key: "value", label: "Collected", color: "#c9973b", type: "area" }]} money />
               ) : (
                 <EmptyState title="No collection in this period" description="Payments recorded in the selected range will appear here." />
               )}
@@ -316,9 +316,9 @@ export function DashboardView({
                 <TrendChart
                   data={charts.growth}
                   series={[
-                    { key: "New", label: "New", color: "#10b981" },
+                    { key: "New", label: "New", color: "#3b665f" },
                     { key: "Disconnected", label: "Disconnected", color: "#f43f5e" },
-                    { key: "Reconnected", label: "Reconnected", color: "#f59e0b" },
+                    { key: "Reconnected", label: "Reconnected", color: "#c9973b" },
                   ]}
                   height={240}
                 />
@@ -329,14 +329,14 @@ export function DashboardView({
           </Card>
 
           <Card>
-            <CardHeader title="Package Distribution" description="Customers by package" icon={<Package />} action={<Link href="/packages" className="text-xs font-medium text-brand-600 hover:underline">Manage</Link>} />
+            <CardHeader title="Package Distribution" description="Customers by package" icon={<Package />} action={<Link href="/packages" className="text-xs font-medium text-gold-700 font-medium hover:underline">Manage</Link>} />
             <CardBody>
               {charts.packageChart.length === 0 ? (
                 <EmptyState title="No packages assigned" description="Assign packages to customers to see the distribution." />
               ) : (
                 <BarChartView
                   data={charts.packageChart}
-                  series={[{ key: "value", label: "Customers", color: "#6d7cf5" }]}
+                  series={[{ key: "value", label: "Customers" }]}
                   stacked={false}
                   horizontal
                   height={Math.max(200, charts.packageChart.length * 30)}
@@ -348,7 +348,7 @@ export function DashboardView({
       </section>
 
       {/* tables */}
-      <section className="space-y-2">
+      <section className="space-y-2 animate-rise" style={{ animationDelay: "240ms" }}>
         <GroupLabel>Attention needed</GroupLabel>
         <DataTableShell
           columns={expiringColumns}
@@ -361,7 +361,7 @@ export function DashboardView({
               actions={
                 <>
                   <ExportCsvButton rows={stats.expiring} columns={expiringColumns} filename="expiring" label="Export" />
-                  <Link href="/customers/expiring" className="inline-flex h-9 items-center gap-1 rounded-full px-3 text-sm font-medium text-brand-600 transition-colors hover:bg-brand-500/10">
+                  <Link href="/customers/expiring" className="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-sm font-medium text-gold-700 hover:bg-gold-100 dark:text-gold-400 dark:hover:bg-gold-500/10">
                     View all <ArrowRight className="size-3.5" />
                   </Link>
                 </>
@@ -372,7 +372,7 @@ export function DashboardView({
         />
       </section>
 
-      <section className="space-y-2">
+      <section className="space-y-2 animate-rise" style={{ animationDelay: "300ms" }}>
         <GroupLabel>Live data</GroupLabel>
 
         <DataTableShell
@@ -384,7 +384,7 @@ export function DashboardView({
             <TableToolbar
               searchPlaceholder="Search online users..."
               actions={
-                <Link href="/customers/online" className="inline-flex h-9 items-center gap-1 rounded-full px-3 text-sm font-medium text-brand-600 transition-colors hover:bg-brand-500/10">
+                <Link href="/customers/online" className="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-sm font-medium text-gold-700 hover:bg-gold-100 dark:text-gold-400 dark:hover:bg-gold-500/10">
                   View all <ArrowRight className="size-3.5" />
                 </Link>
               }
@@ -405,7 +405,7 @@ export function DashboardView({
               actions={
                 <>
                   <ExportCsvButton rows={stats.recentPayments} columns={paymentColumns} filename="recent-payments" />
-                  <Link href="/billing/payments" className="inline-flex h-9 items-center gap-1 rounded-full px-3 text-sm font-medium text-brand-600 transition-colors hover:bg-brand-500/10">
+                  <Link href="/billing/payments" className="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-sm font-medium text-gold-700 hover:bg-gold-100 dark:text-gold-400 dark:hover:bg-gold-500/10">
                     View all <ArrowRight className="size-3.5" />
                   </Link>
                 </>

@@ -205,9 +205,9 @@ export async function getDashboardCharts(range: RangeKey, from?: string, to?: st
   ]);
 
   const statusColors: Record<string, string> = {
-    Active: "#10b981",
-    Pending: "#f59e0b",
-    Suspended: "#f97316",
+    Active: "#3b665f",
+    Pending: "#e3be6e",
+    Suspended: "#c9973b",
     Disconnected: "#94a3b8",
     Archived: "#cbd5e1",
   };
@@ -225,7 +225,7 @@ export async function getDashboardCharts(range: RangeKey, from?: string, to?: st
     select: { id: true, name: true },
   });
   const pkgName = new Map(packages.map((p) => [p.id, p.name]));
-  const palette = ["#6366f1", "#0ea5e9", "#14b8a6", "#f59e0b", "#ec4899", "#8b5cf6", "#22c55e", "#ef4444"];
+  const palette = ["#c9973b", "#3b665f", "#e3be6e", "#4e8078", "#ab7e2c", "#2a4643", "#e8a33d", "#9abbb5"];
 
   const packageChart = pkgRows
     .map((p) => ({ label: pkgName.get(p.packageId!) ?? "Unassigned", value: p._count._all }))

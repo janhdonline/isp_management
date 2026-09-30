@@ -42,6 +42,8 @@ export function AppShell({
         isAdmin={user.isAdmin}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
+        userName={user.name}
+        userEmail={user.email}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">

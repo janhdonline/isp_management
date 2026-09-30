@@ -31,7 +31,7 @@ export function DateRangePicker({
   return (
     <div className={cn("flex flex-wrap items-center gap-2", className)}>
       {showPresets ? (
-        <div className="inline-flex rounded-lg border border-[var(--border-strong)] bg-[var(--surface-3)] p-0.5">
+        <div className="inline-flex rounded-full border border-[var(--border-strong)] bg-[var(--surface)] p-1 shadow-sm">
           {RANGES.map((r) => (
             <button
               key={r.value}
@@ -41,9 +41,9 @@ export function DateRangePicker({
                 if (r.value !== "custom") setParams({ from: null, to: null, range: r.value });
               }}
               className={cn(
-                "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                "rounded-full px-3 py-1.5 text-xs font-medium transition-all",
                 preset === r.value && !showCustom
-                  ? "bg-[var(--surface)] text-[var(--fg)] shadow-sm"
+                  ? "bg-pine-800 text-white shadow-sm dark:bg-gold-500 dark:text-pine-950"
                   : "text-fg-muted hover:text-[var(--fg)]"
               )}
             >
@@ -59,7 +59,7 @@ export function DateRangePicker({
             type="date"
             value={from}
             onChange={(e) => setParams({ from: e.target.value || null, range: "custom" })}
-            className="h-9 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-2.5 text-xs text-[var(--fg)] focus:border-brand-500 focus:outline-none"
+            className="h-9 rounded-full border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-xs text-[var(--fg)] focus:border-gold-500 focus:outline-none"
             aria-label="From date"
           />
           <span className="text-xs text-fg-subtle">to</span>
@@ -67,7 +67,7 @@ export function DateRangePicker({
             type="date"
             value={to}
             onChange={(e) => setParams({ to: e.target.value || null, range: "custom" })}
-            className="h-9 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-2.5 text-xs text-[var(--fg)] focus:border-brand-500 focus:outline-none"
+            className="h-9 rounded-full border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-xs text-[var(--fg)] focus:border-gold-500 focus:outline-none"
             aria-label="To date"
           />
         </div>

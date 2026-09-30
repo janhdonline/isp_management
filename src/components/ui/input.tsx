@@ -5,7 +5,7 @@ import * as React from "react";
 import { Check, ChevronDown } from "lucide-react";
 
 const base =
-  "neu-inset w-full rounded-full text-sm text-[var(--fg)] transition-shadow placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-brand-500/25 disabled:cursor-not-allowed disabled:opacity-70";
+  "w-full rounded-xl border border-[var(--border-strong)] bg-[var(--surface)] text-sm text-[var(--fg)] transition-all placeholder:text-fg-subtle focus:outline-none focus:border-gold-500 focus:ring-2 focus:ring-gold-500/25 disabled:cursor-not-allowed disabled:bg-[var(--surface-3)] disabled:opacity-70";
 
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean }>(
   function Input({ className, invalid, ...props }, ref) {
@@ -84,7 +84,7 @@ export function Checkbox({ className, ...props }: React.InputHTMLAttributes<HTML
     <input
       type="checkbox"
       className={cn(
-        "size-4 shrink-0 cursor-pointer rounded border-[var(--border-strong)] text-brand-600 accent-brand-600 focus:ring-2 focus:ring-brand-500/30",
+        "size-4 shrink-0 cursor-pointer rounded border-[var(--border-strong)] text-gold-600 accent-gold-600 focus:ring-2 focus:ring-gold-500/30",
         className
       )}
       {...props}
@@ -101,7 +101,7 @@ export function Switch({ className, ...props }: React.InputHTMLAttributes<HTMLIn
           className="peer sr-only"
           {...props}
         />
-        <span className="h-5 w-9 rounded-full bg-[var(--border-strong)] transition-colors peer-checked:bg-brand-600 peer-focus-visible:ring-2 peer-focus-visible:ring-brand-500/40" />
+        <span className="h-5 w-9 rounded-full bg-[var(--border-strong)] transition-colors peer-checked:bg-gold-500 peer-focus-visible:ring-2 peer-focus-visible:ring-gold-500/40" />
         <span className="absolute left-0.5 top-0.5 size-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
       </span>
       <span className="text-sm text-[var(--fg)]">{props["aria-label"] ? null : null}</span>
@@ -210,14 +210,14 @@ export function SegmentedControl({
   name: string;
 }) {
   return (
-    <div className="neu-inset inline-flex rounded-full p-1">
+    <div className="inline-flex rounded-full border border-[var(--border-strong)] bg-[var(--surface-3)] p-1">
       {options.map((o) => (
         <label
           key={o.value}
           className={cn(
-            "cursor-pointer rounded-full px-3 py-1.5 text-xs font-medium transition-all",
+            "cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-medium transition-all",
             value === o.value
-              ? "neu-gradient text-white shadow-[3px_3px_8px_var(--neu-dark),-3px_-3px_8px_var(--neu-light)]"
+              ? "bg-pine-800 text-white shadow-sm dark:bg-gold-500 dark:text-pine-950"
               : "text-fg-muted hover:text-[var(--fg)]"
           )}
         >

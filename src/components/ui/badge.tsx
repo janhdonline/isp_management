@@ -69,17 +69,17 @@ export function Badge({
   className?: string;
 }) {
   const tones = {
-    neutral: "bg-[var(--surface-3)] text-fg-muted ring-[var(--border)]",
-    brand: "bg-brand-50 text-brand-700 ring-brand-600/20 dark:bg-brand-500/10 dark:text-brand-300",
-    success: "bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-300",
-    warning: "bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-300",
-    danger: "bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-300",
-    info: "bg-sky-50 text-sky-700 ring-sky-600/20 dark:bg-sky-500/10 dark:text-sky-300",
+    neutral: "bg-[var(--surface-3)] text-fg-muted ring-[var(--border-strong)]",
+    brand: "bg-gold-100 text-gold-800 ring-gold-600/25 dark:bg-gold-500/15 dark:text-gold-300",
+    success: "bg-pine-100 text-pine-800 ring-pine-600/25 dark:bg-pine-500/15 dark:text-pine-300",
+    warning: "bg-amber-100 text-amber-800 ring-amber-600/25 dark:bg-amber-500/15 dark:text-amber-300",
+    danger: "bg-red-100 text-red-800 ring-red-600/25 dark:bg-red-500/15 dark:text-red-300",
+    info: "bg-sky-100 text-sky-800 ring-sky-600/25 dark:bg-sky-500/15 dark:text-sky-300",
   } as const;
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
+        "inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset",
         tones[tone],
         className
       )}

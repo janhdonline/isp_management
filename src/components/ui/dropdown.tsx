@@ -51,7 +51,7 @@ export function DropdownMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         className={cn(
-          "neu-sm neu-press flex size-8 items-center justify-center rounded-full text-fg-muted hover:text-[var(--fg)]",
+          "flex size-8 items-center justify-center rounded-full text-fg-muted transition-all hover:bg-[var(--surface-3)] hover:text-[var(--fg)]",
           buttonClassName
         )}
       >
@@ -62,7 +62,7 @@ export function DropdownMenu({
         <div
           role="menu"
           className={cn(
-            "animate-in-up absolute z-40 mt-1 min-w-48 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1 shadow-lg",
+            "animate-in-up absolute z-40 mt-2 min-w-48 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-1.5 shadow-xl",
             align === "right" ? "right-0" : "left-0"
           )}
         >
@@ -79,10 +79,10 @@ export function DropdownMenu({
                   item.onSelect?.();
                 }}
                 className={cn(
-                  "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors disabled:opacity-50",
+                  "flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm transition-colors disabled:opacity-50",
                   item.danger
                     ? "text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
-                    : "text-[var(--fg)] hover:bg-[var(--surface-3)]"
+                    : "text-[var(--fg)] hover:bg-gold-100/70 dark:hover:bg-[var(--surface-3)]"
                 )}
               >
                 {item.icon ? <span className="[&_svg]:size-4 text-fg-subtle">{item.icon}</span> : null}

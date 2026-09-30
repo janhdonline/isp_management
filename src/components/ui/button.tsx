@@ -4,18 +4,18 @@ import { Loader2 } from "lucide-react";
 import * as React from "react";
 
 const buttonVariants = cva(
-  "neu-press inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface)] disabled:pointer-events-none disabled:opacity-50 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface-2)] disabled:pointer-events-none disabled:opacity-50 active:scale-[0.97] [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        primary: "neu-gradient text-white shadow-[4px_4px_10px_var(--neu-dark),-4px_-4px_10px_var(--neu-light)] hover:brightness-105",
-        secondary: "neu-sm bg-[var(--neu-bg)] text-[var(--fg)]",
-        outline: "neu-inset text-[var(--fg)]",
+        primary: "bg-gold-500 text-pine-950 shadow-md hover:bg-gold-600 hover:shadow-lg",
+        secondary: "bg-[var(--surface)] text-[var(--fg)] shadow-sm hover:shadow",
+        outline: "border border-[var(--border-strong)] bg-[var(--surface)] text-[var(--fg)] hover:border-gold-500",
         ghost: "text-[var(--fg-muted)] hover:bg-[var(--surface-3)] hover:text-[var(--fg)]",
-        danger: "bg-gradient-to-br from-rose-400 to-red-500 text-white shadow-[4px_4px_10px_var(--neu-dark),-4px_-4px_10px_var(--neu-light)] hover:brightness-105",
+        danger: "bg-red-600 text-white hover:bg-red-700 shadow-sm",
         "danger-outline": "border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950",
-        success: "bg-gradient-to-br from-emerald-400 to-emerald-600 text-white shadow-[4px_4px_10px_var(--neu-dark),-4px_-4px_10px_var(--neu-light)] hover:brightness-105",
-        link: "text-brand-600 underline-offset-4 hover:underline",
+        success: "bg-pine-700 text-white hover:bg-pine-800 shadow-sm",
+        link: "text-gold-700 underline-offset-4 hover:underline dark:text-gold-400",
       },
       size: {
         sm: "h-8 px-3 text-xs [&_svg]:size-3.5",
