@@ -34,6 +34,18 @@ const FIELDS: SettingField[] = [
   { key: "network.defaultIpPool", label: "Default IP Pool" },
   { key: "network.defaultRouter", label: "Default Router" },
   { key: "network.defaultPackage", label: "Default Package" },
+  {
+    key: "network.fupAction",
+    label: "Data limit (FUP) action",
+    type: "select",
+    // The wording is the decision, not the label: "throttle" slows a paying
+    // customer down, and whoever sets it should be choosing that knowingly.
+    options: ["off", "notify", "throttle"],
+    hint:
+      "What happens when a subscriber uses up their package's data allowance. " +
+      "Off does nothing. Notify only tells the customer. Throttle also moves them to the " +
+      "package's throttled profile, and needs that profile to be set on the package.",
+  },
 ];
 
 export default async function NetworkSettingsPage() {

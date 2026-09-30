@@ -12,13 +12,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const session = await getSession();
   if (!session) redirect("/login");
 
-  const [lifecycle, totalDueAgg, openTickets] = await Promise.all([
+  const [lifecycle, totalDueAgg, openTickets, fupThrottled] = await Promise.all([
     lifecycleCandidates(),
     prisma.customer.aggregate({
       where: { connectionStatus: { not: "Disconnected" } },
       _sum: { previousDue: true },
     }),
     prisma.ticket.count({ where: { status: { in: ["Open", "Pending", "In Progress"] } } }),
+    // Shown only when it is non-zero — a bell entry that reads "Throttled: 0"
+    // every day is one nobody scrolls to.
+    prisma.customer.count({ where: { fupThrottled: true } }),
   ]);
 
   return (
@@ -31,6 +34,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         expired: lifecycle.expired,
         suspended: lifecycle.expiringSoon,
         openTickets,
+        fupThrottled,
         totalDue: round2(totalDueAgg._sum.previousDue ?? 0),
       }}
     >

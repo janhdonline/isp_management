@@ -3,8 +3,10 @@ import { getSettings } from "@/lib/settings";
 import { nextNumber } from "@/lib/counter";
 import { dispatch } from "@/lib/services/messaging";
 import { createBackup } from "@/lib/services/backup";
+import { customerCycleUsage } from "@/lib/services/fup";
 import { round2, startOfDay, addDays } from "@/lib/utils";
 import { prismaLog } from "@/lib/services/activity";
+import { enforceSetProfile } from "@/lib/services/network-enforcement";
 import type { Tx } from "@/lib/counter";
 
 /**
@@ -404,6 +406,237 @@ export async function runScheduledBackup(): Promise<JobResult> {
 /* Entry point                                                         */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* 7. Fair Usage Policy enforcement                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Applies the package's Fair Usage Policy.
+ *
+ * What it does is narrow on purpose. A customer who has used their allowance
+ * gets their router profile swapped for a slower one, and gets it swapped back
+ * when the next cycle starts. Nothing is disconnected, nothing is suspended, and
+ * no money moves — suspension is a billing decision and is handled by the expiry
+ * sweep, several jobs up.
+ *
+ * Three rules shape this:
+ *
+ *  - **Throttling is sticky within a cycle.** The flag is set once and the
+ *    profile is not re-applied on every run, so a customer crossing the limit
+ *    does not generate a queue of identical router writes, and a router that is
+ *    briefly unreachable is not written to a hundred times.
+ *  - **A package with no throttled profile cannot be throttled.** Notifying the
+ *    customer is still right, and saying the package has no throttle profile is
+ *    more use than silently doing nothing.
+ *  - **A hotspot router is never throttled.** There is no PPP secret to point at
+ *    a different profile, so the only honest action is to tell the customer.
+ */
+export async function enforceFup(): Promise<JobResult> {
+  const s = await getSettings();
+  const action = s["network.fupAction"] ?? "off";
+
+  if (action === "off") {
+    return {
+      ran: 0,
+      skipped: "FUP enforcement is off",
+      note: "Set network.fupAction to notify or throttle in Settings → Network.",
+    };
+  }
+
+  const customers = await prisma.customer.findMany({
+    where: {
+      // Suspension is a billing decision made by the expiry sweep; it takes
+      // precedence, so a suspended customer is left exactly as they are.
+      connectionStatus: "Active",
+      package: { fupLimit: { not: null } },
+    },
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+      username: true,
+      fupThrottled: true,
+      router: { select: { id: true, name: true, sessionSource: true } },
+      package: {
+        select: { name: true, fupLimit: true, fupProfile: true, mikrotikProfile: true },
+      },
+    },
+  });
+
+  let throttled = 0;
+  let restored = 0;
+  let notified = 0;
+  const problems: string[] = [];
+
+  for (const row of customers) {
+    // The query filter guarantees both of these, but the type cannot know that
+    // and a null here would compare as 0 and throttle everybody. Narrowed once,
+    // at the top, so a null package cannot be dereferenced further down either.
+    const pkg = row.package;
+    if (!pkg) continue;
+    const limit = pkg.fupLimit;
+    if (limit === null || limit <= 0) continue;
+    const c = { ...row, package: pkg };
+
+    const usage = await customerCycleUsage(c.id);
+
+    if (usage.exceeded) {
+      // Already throttled: nothing to do. Re-applying the profile on every run
+      // would be a queue of identical writes for no change in the outcome.
+      if (c.fupThrottled) continue;
+
+      // Hotspot has no secret, so there is nothing to repoint. Notify only.
+      if (c.router?.sessionSource === "hotspot") {
+        await notifyFupExceeded(c, usage, "no secret to change on a hotspot router");
+        notified += 1;
+        problems.push(`${c.username}: hotspot router, notified only`);
+        continue;
+      }
+
+      if (action === "notify") {
+        await notifyFupExceeded(c, usage);
+        notified += 1;
+        continue;
+      }
+
+      // action === "throttle"
+      if (!c.package.fupProfile) {
+        // The honest outcome: the customer is over their limit and the package
+        // has nothing to slow them down with. Notify, and say why in the log so
+        // the ISP can fix the package.
+        await notifyFupExceeded(c, usage, "the package has no throttled profile configured");
+        notified += 1;
+        problems.push(`${c.username}: over limit, ${c.package.name} has no throttled profile`);
+        continue;
+      }
+
+      const applied = await enforceSetProfile(c.id, c.package.fupProfile);
+      if (!applied.ok) {
+        // Queued by enforceSetProfile; the retry job will finish it. Not
+        // marking the flag means the next run tries again rather than assuming
+        // a throttle that never happened.
+        problems.push(`${c.username}: ${applied.detail}`);
+        continue;
+      }
+
+      await prisma.customer.update({
+        where: { id: c.id },
+        data: { fupThrottled: true, fupThrottledAt: new Date() },
+      });
+      await prismaLog(prisma, {
+        action: "Throttle",
+        entity: "Customer",
+        entityId: c.id,
+        summary:
+          `${c.name} (${c.username}) used ${usage.gb.toFixed(1)} GB of their ` +
+          `${limit} GB allowance on ${c.package.name}; moved to profile ${c.package.fupProfile}`,
+      });
+      throttled += 1;
+      continue;
+    }
+
+    // Under the limit again — a new cycle has started, so undo the throttle.
+    if (!c.fupThrottled) continue;
+
+    const restoreTo = c.package.mikrotikProfile ?? "";
+    if (!restoreTo) {
+      // Nothing to restore to. The flag is still cleared, because the throttle
+      // genuinely no longer applies — and a customer left on the slow profile
+      // forever is worse than one left on the package default.
+      await prisma.customer.update({
+        where: { id: c.id },
+        data: { fupThrottled: false, fupThrottledAt: null },
+      });
+      await prismaLog(prisma, {
+        action: "Restore",
+        entity: "Customer",
+        entityId: c.id,
+        summary: `${c.name} (${c.username}) is back inside their allowance; no profile on ${c.package.name} to restore, so the router default stands`,
+      });
+      restored += 1;
+      continue;
+    }
+
+    const restoredResult = await enforceSetProfile(c.id, restoreTo);
+    if (!restoredResult.ok) {
+      problems.push(`${c.username}: ${restoredResult.detail}`);
+      continue;
+    }
+
+    await prisma.customer.update({
+      where: { id: c.id },
+      data: { fupThrottled: false, fupThrottledAt: null },
+    });
+    await prismaLog(prisma, {
+      action: "Restore",
+      entity: "Customer",
+      entityId: c.id,
+      summary: `${c.name} (${c.username}) is back inside their allowance; restored profile ${restoreTo}`,
+    });
+    restored += 1;
+  }
+
+  return {
+    ran: throttled + restored,
+    skipped: `${notified} notified, ${customers.length} with a limit checked`,
+    note: problems.length ? problems.slice(0, 5).join("; ") : undefined,
+  };
+}
+
+/**
+ * Tells a customer they have used their allowance.
+ *
+ * The wording avoids "penalty" and "punished", because it is not one: they paid
+ * for a package with a limit on it and they have reached it. It also says what
+ * happens next, since a customer who finds out their internet is slow and has no
+ * idea why will assume the ISP broke something.
+ */
+async function notifyFupExceeded(
+  customer: { id: string; name: string; phone: string; username: string; package: { name: string } },
+  usage: { gb: number; limitGb: number | null },
+  because?: string
+) {
+  const one = (n: number) => (n >= 10 ? Math.round(n) : Math.round(n * 10) / 10);
+  const limit = usage.limitGb === null ? "your allowance" : `${one(usage.limitGb)} GB`;
+
+  const body =
+    `Dear ${customer.name}, you have used ${one(usage.gb)} GB of ${limit} included with ` +
+    `${customer.package.name} this cycle` +
+    (because ? `. ${because}.` : ". ") +
+    `Your speed returns to normal at the start of the next billing cycle. Thank you.`;
+
+  try {
+    const outcome = await dispatch("SMS", customer.phone, "Data limit reached", body);
+
+    await prisma.notification.create({
+      data: {
+        channel: "SMS",
+        recipient: customer.phone,
+        customerId: customer.id,
+        template: "fup-exceeded",
+        subject: "Data limit reached",
+        body,
+        // The recorded status is the gateway's, not "sent" — a customer who was
+        // never actually told must not appear to have been.
+        status: outcome.ok ? "Sent" : "Failed",
+        error: outcome.ok ? null : outcome.error ?? "Not sent",
+        sentAt: outcome.ok ? new Date() : null,
+      },
+    });
+  } catch (e) {
+    // A notification failure must not stop the run: the other customers still
+    // need their allowance checked.
+    await prismaLog(prisma, {
+      action: "Notify",
+      entity: "Customer",
+      entityId: customer.id,
+      summary: `Could not tell ${customer.name} (${customer.username}) they reached their data limit: ${
+        e instanceof Error ? e.message : "unknown error"
+      }`,
+    });
+  }
+}
+
 export async function runAllJobs() {
   const started = Date.now();
   const results: Record<string, JobResult | { error: string }> = {};
@@ -415,6 +648,7 @@ export async function runAllJobs() {
     enforcement: retryNetworkActions,
     collection: collectPayments,
     network: syncNetwork,
+    fup: enforceFup,
     backup: runScheduledBackup,
   })) {
     try {

@@ -24,7 +24,14 @@ export function Topbar({
 }: {
   user: SessionUser;
   onOpenMobile: () => void;
-  alerts: { expiringToday: number; expired: number; suspended: number; openTickets: number; totalDue: number };
+  alerts: {
+    expiringToday: number;
+    expired: number;
+    suspended: number;
+    openTickets: number;
+    fupThrottled: number;
+    totalDue: number;
+  };
 }) {
   const { theme, toggle } = useTheme();
   const router = useRouter();
@@ -55,7 +62,14 @@ export function Topbar({
     },
   ];
 
-  const notificationCount = alerts.expiringToday + alerts.expired + alerts.openTickets;
+  // A throttled customer only counts when there is at least one: the entry is
+  // hidden entirely at zero, so including it would show a badge for something
+  // not on the list.
+  const notificationCount =
+    alerts.expiringToday +
+    alerts.expired +
+    alerts.openTickets +
+    (alerts.fupThrottled > 0 ? alerts.fupThrottled : 0);
 
   return (
     <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 bg-transparent px-3 sm:px-4">
@@ -104,6 +118,16 @@ export function Topbar({
             { label: `Due total`, onSelect: () => router.push("/customers/due") },
             { label: `Suspended: ${alerts.suspended}`, onSelect: () => router.push("/customers/status/suspended") },
             { label: `Open tickets: ${alerts.openTickets}`, onSelect: () => router.push("/support/tickets") },
+            // Conditional rather than always present — a permanent "Throttled: 0"
+            // is noise that trains people to ignore the bell.
+            ...(alerts.fupThrottled > 0
+              ? [
+                  {
+                    label: `Throttled on data limit: ${alerts.fupThrottled}`,
+                    onSelect: () => router.push("/customers?tab=usage"),
+                  },
+                ]
+              : []),
           ]}
           buttonClassName="relative size-10 rounded-full bg-[var(--surface)] shadow-sm transition-all hover:shadow"
           trigger={<Bell className="size-4.5" />}

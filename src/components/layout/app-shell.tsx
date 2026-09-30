@@ -16,7 +16,14 @@ export function AppShell({
   children,
 }: {
   user: SessionUser;
-  alerts: { expiringToday: number; expired: number; suspended: number; openTickets: number; totalDue: number };
+  alerts: {
+    expiringToday: number;
+    expired: number;
+    suspended: number;
+    openTickets: number;
+    fupThrottled: number;
+    totalDue: number;
+  };
   children: React.ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = React.useState(false);

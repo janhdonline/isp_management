@@ -169,6 +169,10 @@ model Package {
   /// Null means subscribers on this package are provisioned with no profile,
   /// which is the same as leaving the router default in place.
   mikrotikProfile String?
+  /// The profile applied when a subscriber on this package crosses their FUP
+  /// limit. Null means there is nothing to throttle them to, so crossing the
+  /// limit can only produce a notification.
+  fupProfile String?
 
   @@index([status])
 }
@@ -223,6 +227,11 @@ model Customer {
   installationFee   Float     @default(0)
   advancePayment    Float     @default(0)
   previousDue       Float     @default(0)
+  /// True while the customer is on the throttled profile because they have used
+  /// up the package's FUP allowance. Sticky within a cycle, so the throttle is
+  /// applied once rather than on every scheduled run.
+  fupThrottled      Boolean   @default(false)
+  fupThrottledAt    DateTime?
   discount          Float     @default(0)
   vat               Float     @default(0)
   totalPayable      Float     @default(0)

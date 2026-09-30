@@ -150,6 +150,12 @@ export const packageSchema = z.object({
     (v) => (v === "" || v === null || v === undefined ? null : String(v).trim()),
     z.string().max(60, "That profile name is too long for RouterOS").nullable()
   ),
+  /// The RouterOS profile applied when a subscriber on this package crosses
+  /// their FUP limit. Optional: without it, exceeding the limit can only notify.
+  fupProfile: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : String(v).trim()),
+    z.string().max(60, "That profile name is too long for RouterOS").nullable()
+  ),
   description: optionalText(1000),
   status: z.enum(["Active", "Inactive"]).default("Active"),
 });

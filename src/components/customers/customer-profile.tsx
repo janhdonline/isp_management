@@ -15,16 +15,41 @@ import {
   formatUptime, daysUntil, relativeTime,
 } from "@/lib/utils";
 import { FileDown } from "lucide-react";
+import { FupUsageBar } from "./fup-usage-bar";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
 
-type Pkg = { id: string; name: string; downloadSpeed: number; uploadSpeed: number; monthlyPrice: number } | null;
+/**
+ * The cycle's usage, computed on the server. Passed in rather than recomputed
+ * client-side because the sum is over BigInt columns and the window comes from
+ * the customer's latest invoice.
+ */
+type FupUsage = {
+  gb: number;
+  limitGb: number | null;
+  throttled: boolean;
+  throttledAt: string | null;
+  from: string;
+  to: string;
+};
+
+type Pkg = {
+  id: string;
+  name: string;
+  downloadSpeed: number;
+  uploadSpeed: number;
+  monthlyPrice: number;
+  /** GB. Null means the package has no data allowance at all. */
+  fupLimit: number | null;
+} | null;
 
 type Customer = {
   id: string;
   customerCode: string;
+  fupThrottled: boolean;
+  fupThrottledAt: string | null;
   name: string;
   fatherName: string | null;
   motherName: string | null;
@@ -162,11 +187,13 @@ export function CustomerProfileTabs({
   activity,
   activityHref,
   metrics,
+  fup,
 }: {
   tab: string;
   customer: Customer;
   activity: ActivityRow[];
   activityHref: string;
+  fup: FupUsage;
   metrics: {
     outstandingInvoices: number;
     outstandingAmount: number;
@@ -197,7 +224,7 @@ export function CustomerProfileTabs({
       {tab === "payments" ? <PaymentsTab customer={customer} /> : null}
       {tab === "connection" ? <ConnectionTab customer={customer} /> : null}
       {tab === "complaints" ? <ComplaintsTab customer={customer} /> : null}
-      {tab === "usage" ? <UsageTab customer={customer} /> : null}
+      {tab === "usage" ? <UsageTab customer={customer} fup={fup} /> : null}
       {tab === "history" ? <HistoryTab customer={customer} activity={activity} activityHref={activityHref} /> : null}
     </div>
   );
@@ -500,7 +527,7 @@ function ComplaintsTab({ customer }: { customer: Customer }) {
 /* Usage                                                               */
 /* ------------------------------------------------------------------ */
 
-function UsageTab({ customer }: { customer: Customer }) {
+function UsageTab({ customer, fup }: { customer: Customer; fup: FupUsage }) {
   const sessions = customer.sessionLogs;
   const totalDown = sessions.reduce((s, x) => s + x.downloadBytes, 0);
   const totalUp = sessions.reduce((s, x) => s + x.uploadBytes, 0);
@@ -542,6 +569,10 @@ function UsageTab({ customer }: { customer: Customer }) {
 
   return (
     <div className="space-y-4">
+      {/* Renders nothing when the package has no data limit, so it costs an
+          unlimited package no vertical space at all. */}
+      <FupUsageBar {...fup} />
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
         <StatCard label="Sessions" value={formatNumber(sessions.length)} tone="brand" />
         <StatCard label="Total Download" value={formatBytes(totalDown)} tone="info" />

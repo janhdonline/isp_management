@@ -38,6 +38,7 @@ export default async function EditPackagePage({ params }: { params: Promise<{ id
                 billingCycle: pkg.billingCycle,
                 fupLimit: pkg.fupLimit,
                 mikrotikProfile: pkg.mikrotikProfile,
+                fupProfile: pkg.fupProfile,
                 description: pkg.description ?? undefined,
                 status: pkg.status,
               }}

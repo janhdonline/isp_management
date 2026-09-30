@@ -87,6 +87,10 @@ export const DEFAULT_SETTINGS: {
 
   // Network
   { key: "network.enforceOnSuspend", value: "true", group: "Network" },
+  // off | notify | throttle. Off by default: throttling changes what a paying
+  // customer gets, and that should be a decision the ISP makes deliberately
+  // after seeing the figures, not one inherited from installing the system.
+  { key: "network.fupAction", value: "off", group: "Network" },
   { key: "network.radiusServer", value: "10.10.0.1", group: "Network" },
   { key: "network.radiusPort", value: "1812", group: "Network" },
   { key: "network.radiusSecret", value: "", group: "Network", isSecret: true },

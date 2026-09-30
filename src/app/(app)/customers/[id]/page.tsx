@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getCustomerFull, getCustomerActivity } from "@/lib/services/customers";
 import { prisma } from "@/lib/prisma";
+import { customerCycleUsage } from "@/lib/services/fup";
 import { getAllPackages } from "@/lib/services/packages";
 import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import { CustomerQuickActions } from "@/components/customers/customer-actions";
@@ -34,6 +35,11 @@ export default async function CustomerProfilePage({
   ]);
 
   if (!customer) notFound();
+
+  // Measured over the same window the last invoice charged for, so the number on
+  // screen is the number the customer is being billed against — not a rolling
+  // week that has nothing to do with either.
+  const cycle = await customerCycleUsage(id);
 
   const outstandingInvoices = customer.invoices.filter((i) => i.status !== "Paid" && i.status !== "Cancelled");
   const profile = toProfile(customer);
@@ -104,6 +110,14 @@ export default async function CustomerProfilePage({
             invoiceCount: customer.invoices.length,
             ticketCount: customer.tickets.length,
           }}
+          fup={{
+            gb: cycle.gb,
+            limitGb: cycle.limitGb,
+            throttled: customer.fupThrottled,
+            throttledAt: customer.fupThrottledAt ? customer.fupThrottledAt.toISOString() : null,
+            from: cycle.from.toISOString(),
+            to: cycle.to.toISOString(),
+          }}
         />
       </PageContainer>
     </>
@@ -116,6 +130,10 @@ type FullCustomer = NonNullable<Awaited<ReturnType<typeof getCustomerFull>>>;
 function toProfile(c: FullCustomer) {
   return {
     ...c,
+    // Dates are serialised across the server/client boundary, and the tab that
+    // shows the throttle date needs it as a string.
+    fupThrottled: c.fupThrottled,
+    fupThrottledAt: c.fupThrottledAt ? c.fupThrottledAt.toISOString() : null,
     downloadBytes: Number(c.downloadBytes),
     uploadBytes: Number(c.uploadBytes),
     sessionLogs: c.sessionLogs.map((s) => ({

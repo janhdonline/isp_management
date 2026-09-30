@@ -20,6 +20,8 @@ export type PkgDefaults = {
   fupLimit?: number | null;
   /// The RouterOS rate-limit profile this package provisions subscribers with.
   mikrotikProfile?: string | null;
+  /// The profile applied when a subscriber crosses their FUP limit.
+  fupProfile?: string | null;
   description?: string;
   status?: string;
 };
@@ -133,6 +135,17 @@ export function PackageForm({
             name="mikrotikProfile"
             defaultValue={defaults.mikrotikProfile ?? ""}
             placeholder="10Mbps"
+          />
+        </Field>
+        <Field
+          label="Throttled Profile (FUP)"
+          error={err("fupProfile")}
+          hint="The profile applied when a subscriber uses up this package's data allowance, e.g. 2Mbps. Without one, crossing the limit can only send a notification — nobody is slowed down."
+        >
+          <Input
+            name="fupProfile"
+            defaultValue={defaults.fupProfile ?? ""}
+            placeholder="2Mbps"
           />
         </Field>
         <Field label="Status">
