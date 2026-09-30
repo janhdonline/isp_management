@@ -11,6 +11,7 @@ import {
   networkReport,
   profitAndLoss,
 } from "@/lib/services/reports";
+import { btrcReport, currentMonth } from "@/lib/services/btrc";
 import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import {
   ReportShell,
@@ -22,6 +23,7 @@ import {
   ProfitAndLoss,
   NetworkReport,
   AttendanceReport,
+  BtrcReport,
 } from "@/components/reports/report-views";
 import { formatDate } from "@/lib/utils";
 
@@ -37,7 +39,18 @@ const TITLES: Record<string, string> = {
   pnl: "Profit & Loss",
   network: "Network Report",
   attendance: "Attendance Report",
+  btrc: "BTRC Subscriber Report",
 };
+
+/**
+ * The month the BTRC tab reports on. Absent means the current month; present but
+ * unusable is passed through as-is, so the report comes back empty rather than
+ * silently reporting a month the user did not ask for.
+ */
+function selectedMonth(sp: Record<string, string | string[] | undefined>): string {
+  const raw = sp.month;
+  return typeof raw === "string" ? raw : currentMonth();
+}
 
 export default async function ReportsPage({
   searchParams,
@@ -59,6 +72,7 @@ export default async function ReportsPage({
       : defaultRange();
 
   let body: React.ReactNode = null;
+  let data: Awaited<ReturnType<typeof btrcReport>> | null = null;
 
   switch (tab) {
     case "customers":
@@ -85,11 +99,23 @@ export default async function ReportsPage({
     case "attendance":
       body = <AttendanceReport data={await attendanceReportData(range)} />;
       break;
+    case "btrc": {
+      // The regulator wants one month at a time, so this tab has its own `month`
+      // parameter rather than borrowing the arbitrary from/to range above. No
+      // `month` in the URL means the current month; an unusable one reports
+      // empty rather than falling back, so a blank picker cannot be read as a
+      // filing for the wrong month.
+      data = await btrcReport(selectedMonth(sp));
+      body = <BtrcReport data={data} />;
+      break;
+    }
     default:
       body = <CustomerReport data={await customerReport(range)} />;
   }
 
-  const periodScoped = !["due", "network"].includes(tab);
+  // BTRC is filed per calendar month, so the header describes the month the tab
+  // actually shows rather than the arbitrary from/to range the other tabs use.
+  const periodScoped = !["due", "network", "btrc"].includes(tab);
 
   return (
     <>
@@ -98,7 +124,11 @@ export default async function ReportsPage({
         description={
           periodScoped
             ? `Covering ${formatDate(range.from)} to ${formatDate(range.to)}. Change the range above and the figures regenerate.`
-            : "A live snapshot of the network as it is right now."
+            : tab === "btrc"
+              ? data?.label
+                ? `Subscriber position for ${data.label}. Counts match the dashboard and the customer list.`
+                : "Pick a month to build the return."
+              : "A live snapshot of the network as it is right now."
         }
         breadcrumb={[{ label: "Reports", href: "/reports" }, { label: TITLES[tab] ?? "Overview" }]}
       />

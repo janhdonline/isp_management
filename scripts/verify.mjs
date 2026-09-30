@@ -292,6 +292,7 @@ console.log("\nPhase 2 pages");
     ...["customers", "billing", "collection", "due", "expense", "pnl", "network", "attendance"].map(
       (t) => `/reports?tab=${t}`
     ),
+    "/reports?tab=btrc",
   ];
   const bad = [];
   for (const p of pages) {
@@ -307,6 +308,91 @@ console.log("\nPhase 2 pages");
     headers: { cookie },
   });
   check("report accepts a custom date range", reports.status === 200, `got ${reports.status}`);
+}
+
+/* ---------------------------------------------------------------- */
+console.log("\nBTRC reporting (Phase E)");
+{
+  // The tab has to render for a chosen month and for an empty one. The empty case
+  // is the one that catches a report which is really a throw dressed up as a
+  // screen: a cleared month picker is a normal state, not a failure.
+  const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+
+  const tab = await fetch(`${BASE}/reports?tab=btrc&month=${month}`, { headers: { cookie } });
+  const tabHtml = await tab.text();
+  check("the BTRC tab renders", tab.status === 200, `got ${tab.status}`);
+  check("the BTRC tab is linked from the report tabs", tabHtml.includes("BTRC"));
+
+  const cleared = await fetch(`${BASE}/reports?tab=btrc&month=`, { headers: { cookie } });
+  check("an empty month renders an empty report, not an error", cleared.status === 200, `got ${cleared.status}`);
+
+  const bogus = await fetch(`${BASE}/reports?tab=btrc&month=not-a-month`, { headers: { cookie } });
+  check("a malformed month renders rather than throwing", bogus.status === 200, `got ${bogus.status}`);
+
+  // The download is what actually gets filed, so it is checked as a file: the
+  // header has to be the documented layout, in order.
+  const csv = await fetch(`${BASE}/api/reports/btrc?month=${month}`, { headers: { cookie } });
+  check("the CSV export responds", csv.status === 200, `got ${csv.status}`);
+  check(
+    "the export is a CSV attachment",
+    (csv.headers.get("content-type") ?? "").includes("text/csv") &&
+      (csv.headers.get("content-disposition") ?? "").includes("attachment"),
+    `type=${csv.headers.get("content-type")} disposition=${csv.headers.get("content-disposition")}`
+  );
+
+  const body = (await csv.text()).replace(/^﻿/, "");
+  const lines = body.trim().split("\n");
+  const expectedHeader = [
+    "Package",
+    "Area",
+    "Active",
+    "Suspended",
+    "Disconnected",
+    "Total Subscribers",
+    "New Connections",
+    "Churn",
+  ];
+  check(
+    "the CSV header is the documented column layout",
+    lines[0] === expectedHeader.join(","),
+    `got "${lines[0]}"`
+  );
+  check(
+    "every CSV row has a value per column",
+    lines.slice(1).every((l) => l.split(",").length === expectedHeader.length),
+    `${lines.length - 1} data rows`
+  );
+
+  // A month with nothing in it must still download — an operator who clears the
+  // picker and hits export is asking for an empty return, and a 500 would leave
+  // them with no file to inspect.
+  const emptyCsv = await fetch(`${BASE}/api/reports/btrc?month=`, { headers: { cookie } });
+  const emptyBody = (await emptyCsv.text()).replace(/^﻿/, "");
+  check("an empty month downloads a header-only file", emptyCsv.status === 200 && emptyBody.trim().split("\n").length === 1);
+
+  // A compliance return is staff-only, in both directions.
+  const anonCsv = await fetch(`${BASE}/api/reports/btrc?month=${month}`);
+  check("the export requires a session", anonCsv.status === 401, `got ${anonCsv.status}`);
+
+  const tech = await fetch(`${BASE}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "tech@isp.com", password: "tech123" }),
+  });
+  const techCookie = (tech.headers.getSetCookie?.() ?? []).map((c) => c.split(";")[0]).join("; ");
+  const techCsv = await fetch(`${BASE}/api/reports/btrc?month=${month}`, { headers: { cookie: techCookie } });
+  check(
+    "a technician without reports.export is refused (403)",
+    techCsv.status === 403,
+    `got ${techCsv.status}`
+  );
+
+  // Generating a return must not move a single row. Count before and after.
+  const before = (await api("/api/customers?perPage=1")).body.total;
+  await fetch(`${BASE}/api/reports/btrc?month=${month}`, { headers: { cookie } }).then((r) => r.text());
+  await fetch(`${BASE}/reports?tab=btrc&month=${month}`, { headers: { cookie } }).then((r) => r.text());
+  const after = (await api("/api/customers?perPage=1")).body.total;
+  check("generating and exporting the return changes nothing", before === after, `${before} -> ${after}`);
 }
 
 /* ---------------------------------------------------------------- */

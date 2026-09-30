@@ -5,7 +5,7 @@ import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { StatCard, StatCardGrid } from "@/components/ui/stat-card";
 import { Badge, StatusBadge } from "@/components/ui/badge";
 import { Tabs } from "@/components/ui/tabs";
-import { DataTableShell, ExportCsvButton, TableToolbar, type Column } from "@/components/ui/data-table";
+import { DataTableShell, ExportCsvButton, TableToolbar, useTableQuery, type Column } from "@/components/ui/data-table";
 import { DateRangeFilter } from "@/components/ui/date-filter";
 import { EmptyState } from "@/components/ui/states";
 import { BarChartView, DonutChart, ChartLegend, TrendChart } from "@/components/ui/charts";
@@ -37,6 +37,7 @@ export function ReportShell({
     { value: "pnl", label: "Profit & Loss", href: "/reports?tab=pnl" },
     { value: "network", label: "Network", href: "/reports?tab=network" },
     { value: "attendance", label: "Attendance", href: "/reports?tab=attendance" },
+    { value: "btrc", label: "BTRC", href: "/reports?tab=btrc" },
   ];
 
   return (
@@ -646,6 +647,123 @@ export function AttendanceReport({ data }: { data: AttendanceReportData }) {
           <BarChartView data={data.byEmployee} series={[{ key: "value", label: "Records" }]} stacked={false} horizontal height={Math.max(220, data.byEmployee.length * 30)} />
         </Panel>
       </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/* BTRC subscriber report                                              */
+/* ================================================================== */
+
+type BtrcData = {
+  month: string | null;
+  label: string;
+  rows: {
+    packageId: string | null;
+    areaId: string | null;
+    package: string;
+    area: string;
+    active: number;
+    suspended: number;
+    disconnected: number;
+    total: number;
+    newConnections: number;
+    churn: number;
+  }[];
+  totals: {
+    active: number;
+    suspended: number;
+    disconnected: number;
+    total: number;
+    newConnections: number;
+    churn: number;
+    netChange: number;
+  };
+};
+
+/** Month picker bound to `?month=YYYY-MM`, which is what the export reads too. */
+export function BtrcMonthFilter({ month }: { month: string }) {
+  const { setParams } = useTableQuery();
+  return (
+    <label className="flex items-center gap-1.5">
+      <span className="text-xs text-fg-subtle">Month</span>
+      <input
+        type="month"
+        aria-label="Report month"
+        value={month}
+        onChange={(e) => setParams({ month: e.target.value || null })}
+        className="h-9 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-2.5 text-xs text-[var(--fg)] focus:border-brand-500 focus:outline-none"
+      />
+    </label>
+  );
+}
+
+export function BtrcReport({ data }: { data: BtrcData }) {
+  const { setParams, searchParams } = useTableQuery();
+  // The export is a real download from the permission-checked endpoint rather
+  // than a client-side blob, so the file a user saves is byte-identical to the
+  // one the server builds and it inherits the same permission check.
+  const exportHref = `/api/reports/btrc?month=${encodeURIComponent(data.month ?? "")}`;
+  const monthParam = searchParams.get("month");
+
+  const columns: Column<BtrcData["rows"][number]>[] = [
+    { key: "package", header: "Package", cell: (r) => <span className="font-medium">{r.package}</span>, exportValue: (r) => r.package },
+    { key: "area", header: "Area", cell: (r) => <span className="text-xs text-fg-muted">{r.area}</span>, exportValue: (r) => r.area },
+    { key: "active", header: "Active", align: "right", cell: (r) => <span className="tnum text-xs">{r.active}</span>, exportValue: (r) => r.active },
+    { key: "suspended", header: "Suspended", align: "right", cell: (r) => <span className="tnum text-xs">{r.suspended}</span>, exportValue: (r) => r.suspended },
+    { key: "disconnected", header: "Disconnected", align: "right", cell: (r) => <span className="tnum text-xs text-fg-muted">{r.disconnected}</span>, exportValue: (r) => r.disconnected },
+    { key: "total", header: "Total", align: "right", cell: (r) => <span className="tnum text-xs font-semibold">{r.total}</span>, exportValue: (r) => r.total },
+    { key: "new", header: "New", align: "right", hideBelow: "sm", cell: (r) => <span className="tnum text-xs text-emerald-600 dark:text-emerald-400">{r.newConnections}</span>, exportValue: (r) => r.newConnections },
+    { key: "churn", header: "Churn", align: "right", hideBelow: "sm", cell: (r) => <span className="tnum text-xs text-red-600 dark:text-red-400">{r.churn}</span>, exportValue: (r) => r.churn },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 no-print">
+        <BtrcMonthFilter month={monthParam ?? data.month ?? ""} />
+        <a
+          href={exportHref}
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border-strong)] px-3 text-sm font-medium hover:bg-[var(--surface-3)]"
+        >
+          <FileSpreadsheet className="size-4" /> Export CSV
+        </a>
+      </div>
+
+      <StatCardGrid>
+        <StatCard label="Total Subscribers" value={formatNumber(data.totals.total)} icon={Users} tone="brand" />
+        <StatCard label="Active" value={formatNumber(data.totals.active)} icon={CheckCircle2} tone="success" />
+        <StatCard label="Suspended" value={formatNumber(data.totals.suspended)} icon={CalendarClock} tone="warning" />
+        <StatCard label="Disconnected" value={formatNumber(data.totals.disconnected)} icon={ArrowRight} tone="neutral" />
+        <StatCard label="New Connections" value={formatNumber(data.totals.newConnections)} icon={TrendingUp} tone="info" hint={data.label || "no month selected"} />
+        <StatCard
+          label="Churn"
+          value={formatNumber(data.totals.churn)}
+          icon={Percent}
+          tone="danger"
+          hint={`Net ${data.totals.netChange >= 0 ? "+" : ""}${data.totals.netChange}`}
+        />
+      </StatCardGrid>
+
+      <DataTableShell
+        columns={columns}
+        rows={data.rows}
+        rowKey={(r) => `${r.packageId ?? "none"}:${r.areaId ?? "none"}`}
+        compact
+        toolbar={
+          <TableToolbar
+            searchPlaceholder="Search package, area..."
+            actions={
+              <button
+                onClick={() => setParams({ month: null })}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border-strong)] px-3 text-sm font-medium hover:bg-[var(--surface-3)]"
+              >
+                Clear month
+              </button>
+            }
+          />
+        }
+        empty={<EmptyState title="No subscriber data" description="Pick a month to build the return." />}
+      />
     </div>
   );
 }

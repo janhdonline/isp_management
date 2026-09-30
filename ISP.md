@@ -999,7 +999,8 @@ ISP MANAGEMENT SYSTEM
 │   ├── Expense Reports
 │   ├── Profit & Loss
 │   ├── Network Reports
-│   └── Attendance Reports
+│   ├── Attendance Reports
+│   └── BTRC Subscriber Report
 │
 ├── Notifications
 │   ├── SMS
@@ -1094,6 +1095,43 @@ Payment Form: Collected by Reseller (optional)
 Reports → Commission: date range, per-reseller collections, commission =
 collections × commission %. Derived from payment rows; v1 has no separate
 reseller ledger and no reseller login.
+
+------------------------------------------------------------------------
+
+## 27. BTRC Reporting
+
+Reports → BTRC: the periodic subscriber return filed with the Bangladesh
+Telecommunication Regulatory Commission.
+
+Month picker (defaults to the current month), one table, Export CSV.
+
+Table: rows are a package × area pair; columns are Active, Suspended,
+Disconnected, Total Subscribers, New Connections and Churn for that pair.
+A pair with nobody today but connections in the month still gets a row.
+
+Every subscriber count runs through `buildCustomerWhere` — the Customers
+list's own filter builder, and so the same predicate the dashboard cards
+read. The report has no counting logic of its own, because a second
+implementation of "count the active customers" is exactly how a filed return
+ends up disagreeing with the operator's own screen.
+
+Status columns are a snapshot of the base as it stands; New Connections and
+Churn are the selected month. The app stores current status and no history of
+it, so a historical status split cannot be produced — see docs/BTRC_REPORT.md
+for how every figure is derived.
+
+CSV: the column layout lives in one constant, `BTRC_COLUMNS` in
+src/lib/services/btrc.ts, with the header row, the row values and the filename
+all derived from it. **It has not been confirmed against BTRC's current
+prescribed format and must be checked before the first real submission.**
+docs/BTRC_REPORT.md documents the layout and asserts against the constant.
+
+Export: GET /api/reports/btrc?month=YYYY-MM, gated on reports.export like the
+other exports. Read-only — generating or exporting a return writes nothing.
+
+An empty or unparseable month gives an empty report, not an error: a cleared
+month picker is a normal state, and reporting the wrong month because a
+parameter was dropped is the worse failure.
 
 ------------------------------------------------------------------------
 
