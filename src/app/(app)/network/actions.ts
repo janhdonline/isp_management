@@ -53,3 +53,45 @@ export async function disconnectUserAction(customerId: string): Promise<NetActio
     return { formError: e instanceof Error ? e.message : "Disconnect failed" };
   }
 }
+
+/**
+ * Grants or withdraws this app's permission to write PPP secrets on a router.
+ *
+ * Requires `network.edit` rather than `network.view`, and is audit-logged: this
+ * is the switch that lets the system create and delete credentials on a piece of
+ * hardware, so "who turned this on, and when" needs to be answerable later.
+ */
+export async function setRouterAutoProvisionAction(
+  id: string,
+  enabled: boolean
+): Promise<NetActionState> {
+  try {
+    const session = await requirePermission("network.edit");
+    const { prisma } = await import("@/lib/prisma");
+    const router = await prisma.router.findUnique({
+      where: { id },
+      select: { id: true, name: true, autoProvision: true },
+    });
+    if (!router) return { formError: "That router no longer exists." };
+
+    await prisma.router.update({ where: { id }, data: { autoProvision: enabled } });
+    await logActivity(
+      {
+        action: enabled ? "Enable" : "Disable",
+        entity: "Router",
+        entityId: id,
+        summary: enabled
+          ? `Auto-provisioning turned on for ${router.name} — this app may now create, reprofile and delete PPP secrets on it`
+          : `Auto-provisioning turned off for ${router.name} — no further secrets will be created, reprofiled or deleted there`,
+      },
+      session.id
+    );
+
+    revalidatePath("/network");
+    revalidatePath("/network/routers");
+    revalidatePath(`/network/routers/${id}`);
+    return { success: enabled ? "Auto-provisioning is on." : "Auto-provisioning is off." };
+  } catch (e) {
+    return { formError: e instanceof Error ? e.message : "Could not change the setting" };
+  }
+}

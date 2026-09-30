@@ -511,11 +511,20 @@ export async function enforceFup(): Promise<JobResult> {
       }
 
       const applied = await enforceSetProfile(c.id, c.package.fupProfile);
-      if (!applied.ok) {
-        // Queued by enforceSetProfile; the retry job will finish it. Not
-        // marking the flag means the next run tries again rather than assuming
-        // a throttle that never happened.
-        problems.push(`${c.username}: ${applied.detail}`);
+      // `skipped` is not success. enforceSetProfile reports "skipped" for a
+      // router with auto-provisioning switched off, and treating that as applied
+      // would set fupThrottled on a customer the router never touched — the flag
+      // would then suppress every future attempt, and the ISP's own view would
+      // say a throttle is in force that is not.
+      if (!applied.ok || applied.skipped) {
+        // A failure is queued by enforceSetProfile and the retry job finishes it.
+        // A skip is queued by nobody, because nothing was wanted — so the flag
+        // stays unset either way and the next run tries again.
+        problems.push(
+          applied.skipped
+            ? `${c.username}: throttle skipped, ${applied.detail}`
+            : `${c.username}: ${applied.detail}`
+        );
         continue;
       }
 
@@ -558,8 +567,14 @@ export async function enforceFup(): Promise<JobResult> {
     }
 
     const restoredResult = await enforceSetProfile(c.id, restoreTo);
-    if (!restoredResult.ok) {
-      problems.push(`${c.username}: ${restoredResult.detail}`);
+    // Same rule as the throttle: a skip means the router was left alone, so
+    // clearing the flag would record a restore that never happened.
+    if (!restoredResult.ok || restoredResult.skipped) {
+      problems.push(
+        restoredResult.skipped
+          ? `${c.username}: restore skipped, ${restoredResult.detail}`
+          : `${c.username}: ${restoredResult.detail}`
+      );
       continue;
     }
 

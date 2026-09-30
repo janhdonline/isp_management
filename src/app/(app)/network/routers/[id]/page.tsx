@@ -4,6 +4,7 @@ import { routerHealth } from "@/lib/services/network";
 import { TriangleAlert } from "lucide-react";
 import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import { RouterDetailView } from "@/components/network/network-tables";
+import { AutoProvisionToggle } from "@/components/network/auto-provision-toggle";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export default async function RouterDetailPage({ params }: { params: Promise<{ i
         description={`${data.router.model ?? "Unknown model"} · ${data.router.ipAddress}:${data.router.apiPort} · ${data.router.location ?? "No location"}`}
         breadcrumb={[{ label: "Network", href: "/network" }, { label: "Routers", href: "/network/routers" }, { label: data.router.name }]}
       />
-      <PageContainer>
+      <PageContainer className="space-y-4">
         {/* Without credentials the readings below are simulated, so say so
             rather than letting them pass for the router's real state. */}
         {data.live ? null : (
@@ -46,6 +47,13 @@ export default async function RouterDetailPage({ params }: { params: Promise<{ i
             </span>
           </div>
         ) : null}
+        {/* Above the readings, because the switch decides whether anything this
+            system does actually reaches this router. */}
+        <AutoProvisionToggle
+          routerId={data.router.id}
+          routerName={data.router.name}
+          enabled={data.router.autoProvision}
+        />
         <RouterDetailView
           router={{
             id: data.router.id,

@@ -68,6 +68,21 @@ const STATE_DEPENDENT: ReadonlySet<NetworkActionType> = new Set<NetworkActionTyp
 const isStateDependent = (action: string): boolean =>
   STATE_DEPENDENT.has(action as NetworkActionType);
 
+/**
+ * The actions that write to a router's secrets, and therefore the ones the
+ * per-router `autoProvision` flag governs.
+ *
+ * Suspend and reconnect are absent on purpose. They disable or re-enable a
+ * secret that already exists, and they are the mechanism a billing decision
+ * depends on — gating those would mean a customer the office has suspended is
+ * still browsing because nobody remembered a checkbox.
+ */
+const PROVISIONING_ACTIONS: ReadonlySet<NetworkActionType> = new Set<NetworkActionType>([
+  "provision",
+  "setProfile",
+  "removeSecret",
+]);
+
 export type EnforcementResult = {
   ok: boolean;
   /** Human-readable, safe to show in a toast. */
@@ -193,6 +208,7 @@ export async function enforceRemoveSecretByUsername(
       apiSecretEnc: true,
       useSsl: true,
       sessionSource: true,
+      autoProvision: true,
     },
   });
 
@@ -200,6 +216,19 @@ export async function enforceRemoveSecretByUsername(
     return {
       ok: false,
       detail: `The router for ${username} no longer exists, so its secret cannot be removed.`,
+    };
+  }
+
+  // Same opt-in gate as the customer-routed path, and it is more important here:
+  // this path runs for a customer whose row is already gone, so nothing else
+  // would stop it writing to a router that was never opted in.
+  if (!router.autoProvision) {
+    return {
+      ok: true,
+      skipped: true,
+      detail:
+        `Auto-provisioning is off for ${router.name}, so the secret for ${username} was left ` +
+        `alone. Turn it on in Network → Routers if you want this system to manage secrets there.`,
     };
   }
 
@@ -362,6 +391,7 @@ async function runEnforcement(
           apiSecretEnc: true,
           useSsl: true,
           sessionSource: true,
+          autoProvision: true,
         },
       },
     },
@@ -379,6 +409,28 @@ async function runEnforcement(
       ok: true,
       skipped: true,
       detail: `${customer.name} has no router on file, so there was nothing to change on the network.`,
+    };
+  }
+
+  // The opt-in gate, and the reason it exists: this system writing to a router is
+  // a capability an admin grants per router, not a side effect of using a
+  // billing system. Without it, installing the software and filling in a router's
+  // API credentials was enough to start creating and deleting PPP secrets on
+  // hardware nobody had agreed this app should touch.
+  //
+  // Checked before the queue row is written, so a skipped action leaves no
+  // trace to be retried — there is nothing pending, because nothing was wanted.
+  // Suspension and reconnect are deliberately not gated: a customer the office
+  // has decided to cut off should be cut off whatever this flag says, and Phase
+  // A's own `network.enforceOnSuspend` is the switch for that.
+  if (!customer.router.autoProvision && PROVISIONING_ACTIONS.has(action)) {
+    return {
+      ok: true,
+      skipped: true,
+      detail:
+        `Auto-provisioning is off for ${customer.router.name}, so no secret was created, ` +
+        `changed or removed there. Turn it on in Network → Routers if you want this system ` +
+        `to manage secrets on that router.`,
     };
   }
 
@@ -700,6 +752,7 @@ async function retryOrphanedRemoval(row: {
           apiSecretEnc: true,
           useSsl: true,
           sessionSource: true,
+          autoProvision: true,
         },
       })
     : null;

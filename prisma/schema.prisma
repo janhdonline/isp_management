@@ -487,6 +487,14 @@ model Router {
   useSsl      Boolean   @default(false)
   /// Where subscribers are terminated: "ppp" (PPPoE) or "hotspot".
   sessionSource String  @default("ppp")
+  /// Whether this app may create, reprofile and delete PPP secrets here.
+  ///
+  /// Off by default, and it must stay that way. Writing to a router is not a
+  /// side effect of using a billing system — an admin has to decide which of
+  /// their routers this system is allowed to touch, one at a time. Suspension
+  /// (Phase A) is not gated by this, because a customer the office has decided
+  /// to cut off should be cut off regardless.
+  autoProvision Boolean @default(false)
   status      String    @default("Unknown") // Online | Offline | Unknown
   cpu         Float?
   ram         Float?

@@ -81,6 +81,9 @@ before(async () => {
       apiSecretEnc: mock.password,
       useSsl: false,
       sessionSource: "ppp",
+      // Opted in: these tests are about what provisioning does once a router has
+      // agreed to it. The gate itself is covered in autoprovision-gate.test.mjs.
+      autoProvision: true,
       status: "Online",
     },
     select: { id: true, name: true, ipAddress: true, apiPort: true },

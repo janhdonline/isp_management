@@ -94,6 +94,39 @@ The retry job's "is this still wanted?" check applies to `suspend` and
 Failures stay `Pending`, never terminal. Backoff and the ten-attempt cap are
 unchanged from Phase A.
 
+## The auto-provisioning gate (added after review)
+
+`Router.autoProvision`, default **false**.
+
+The first version of this phase wrote to a router as soon as a customer was
+created, a package changed or a customer was deleted. That is the wrong default
+and it was not what this phase specified. Typing a router's API password into a
+billing system should not be the same decision as letting that system create and
+delete credentials on the hardware — an admin has to grant that, one router at a
+time, on purpose.
+
+The gate covers `provision`, `setProfile` and `removeSecret`. It is checked
+**before** the `NetworkAction` row is written, so a skipped action leaves nothing
+pending; a queue row for an action nobody wanted would be retried forever.
+
+`enforceRemoveSecretByUsername` carries the same gate, and it matters more there:
+that path exists for a customer whose row is already gone, so nothing else would
+stop it writing to a router that was never opted in.
+
+**`suspend` and `reconnect` are not gated.** Suspension is a billing decision,
+and gating it would mean a customer the office has decided to cut off keeps
+browsing because nobody remembered a checkbox. Phase A's own
+`network.enforceOnSuspend` is the switch that governs it.
+
+### The FUP interaction this created
+
+`enforceFup()` calls `enforceSetProfile()`, which now reports `{ ok: true,
+skipped: true }` for an opted-out router. It checked only `!applied.ok`, so a
+throttle that never happened would be recorded: `fupThrottled` set to `true`, a
+profile that was never applied, and every future run skipping the customer
+because the flag said the work was done. The flag is now cleared only when the
+call was actually applied, and a skip is reported in the job's note.
+
 ## C6 — Customer actions
 
 - **Create** — after the commit, and only for a PPPoE router. Hotspot has no
