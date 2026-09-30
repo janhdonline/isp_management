@@ -452,6 +452,19 @@ message logged) and Reports (eight reports over one shared date range).
 Phase 2 modules are driven by server actions rather than REST routes, so they
 are reached through their pages, not through `/api`.
 
+**Also delivered since:** Inventory with a stock ledger and automatic router
+provisioning · FUP enforcement · a customer portal at `/portal` with its own
+session and its own login · reseller tracking with a derived commission report.
+
+---
+
+## Deploying
+
+`DEPLOY.md` is a step-by-step for Vercel + Neon, from an empty account to a
+working deployment, including the environment variables and the free-tier limits
+worth knowing before something looks broken. `docs/DEMO.md` has the demo
+credentials and a twelve-step walkthrough for showing the system.
+
 ---
 
 ## Verification

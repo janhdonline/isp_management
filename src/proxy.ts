@@ -39,6 +39,17 @@ const TOKEN_PATHS = ["/api/cron", "/api/webhooks"];
  */
 const PORTAL_PREFIX = "/portal";
 
+/**
+ * Paths that never belong to the application and must be let through untouched.
+ *
+ * `/_vercel` is the one that is easy to miss. Vercel Analytics posts to
+ * `/_vercel/insights/view` from the browser; that path has no dot in it, so the
+ * asset heuristic below does not catch it, and without this line the session
+ * gate answers it with a redirect to the login page. The symptom is analytics
+ * silently reporting nothing, on a deployment that looks otherwise healthy.
+ */
+const PLATFORM_PREFIXES = ["/_next", "/_vercel", "/favicon", "/robots.txt", "/sitemap.xml"];
+
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -47,8 +58,9 @@ export function proxy(request: NextRequest) {
     TOKEN_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ||
     pathname === PORTAL_PREFIX ||
     pathname.startsWith(`${PORTAL_PREFIX}/`) ||
-    pathname.startsWith("/_next") ||
-    pathname.startsWith("/favicon") ||
+    PLATFORM_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`) || pathname.startsWith(`${p}.`)) ||
+    // Anything with a file extension is a static asset. Cuid-shaped ids contain
+    // no dots, so this cannot be used to slip past a real page.
     pathname.includes(".")
   ) {
     return NextResponse.next();

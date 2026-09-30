@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && prisma migrate deploy && next build",
     "start": "next start",
     "lint": "eslint",
     "db:pg": "node scripts/pg-dev.mjs",
@@ -16,7 +16,9 @@
     "setup": "prisma migrate deploy && npm run prisma:seed",
     "migrate:from:sqlite": "tsx scripts/transfer-sqlite-to-postgres.ts ./dev.db",
     "verify": "node scripts/verify.mjs",
-    "test": "tsx --test tests/"
+    "test": "tsx --test tests/",
+    "postinstall": "prisma generate",
+    "build:no-migrate": "prisma generate && next build"
   },
   "dependencies": {
     "@prisma/adapter-better-sqlite3": "^7.10.0",

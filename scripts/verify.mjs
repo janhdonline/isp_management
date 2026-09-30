@@ -5,8 +5,34 @@
  * behind it. Verifies the ISP.md section 21 chain: payment -> invoice ->
  * customer due -> account balance -> receipt -> audit log.
  *
- *   node scripts/verify.mjs
+ *   npm run verify
  */
+
+// `.env` has to be read here, and not by the application, because several
+// checks assert things about the server's own configuration — that CRON_SECRET
+// is set, for instance. Those values live in `.env`, which Next.js loads for the
+// app but which nothing loads for a plain node script. Without this the check
+// read an empty environment and reported a misconfiguration that did not exist.
+//
+// Node's own `--env-file` flag would do, but it errors when the file is absent
+// and this script is meant to run against a deployed server too. A missing file
+// is not a reason to refuse to run.
+import { readFileSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+if (existsSync(join(root, ".env")) && !process.env.CRON_SECRET) {
+  for (const line of readFileSync(join(root, ".env"), "utf8").split("\n")) {
+    const match = /^\s*([A-Z_][A-Z_0-9]*)\s*=\s*(.*)$/.exec(line);
+    if (!match) continue;
+    const [, key, rawValue] = match;
+    // Real .env values can be quoted, and a `#` inside quotes is not a comment.
+    const value = rawValue.trim().replace(/^["'](.*)["']$/, "$1");
+    process.env[key] ??= value;
+  }
+}
+
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 
 let cookie = "";
@@ -412,12 +438,26 @@ console.log("\nnetwork enforcement (Phase A)");
   }
 
   // The retry job must exist and be safe to run with nothing queued.
+  //
+  // The route authenticates on `authorization: Bearer ...` and nothing else.
+  // This used to send an `x-cron-secret` header, which the route has never
+  // read, so the request was always rejected and the check passed on its `401`
+  // arm without ever having run the job.
+  //
+  // There is also no per-job filter on the route — it always runs the whole set,
+  // which is why the assertion is that `enforcement` appears in the results
+  // rather than that some filter was honoured. Every job is idempotent, so
+  // running the full set against a seeded database is safe.
   const cron = await api("/api/cron", {
     method: "POST",
-    headers: { "x-cron-secret": process.env.CRON_SECRET ?? "" },
-    body: JSON.stringify({ job: "enforcement" }),
+    headers: { authorization: `Bearer ${process.env.CRON_SECRET ?? ""}` },
+    body: JSON.stringify({ reason: "verify: enforcement retry" }),
   });
-  check("the enforcement job runs", cron.status === 200 || cron.status === 401, `got ${cron.status}`);
+  check(
+    "the enforcement job runs",
+    cron.status === 200 && "enforcement" in (cron.body?.results ?? {}),
+    `status=${cron.status} results=${Object.keys(cron.body?.results ?? {}).join(",") || "none"}`,
+  );
 }
 
 /* ---------------------------------------------------------------- */

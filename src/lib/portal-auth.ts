@@ -46,28 +46,35 @@ let cachedKey: Uint8Array | null = null;
 function secretKey(): Uint8Array {
   if (cachedKey) return cachedKey;
 
-  const fromEnv =
-    process.env.AUTH_SECRET ||
-    (process.env.NEXTAUTH_SECRET as string | undefined);
+  // The same variable and the same rules as the staff session in `auth.ts`. The
+  // minimum-length check is repeated rather than shared because a short secret
+  // accepted here and refused there would be a very confusing deployment: staff
+  // would fail to sign in with an error naming AUTH_SECRET, while the portal
+  // silently worked with a weak key.
+  const configured = process.env.AUTH_SECRET?.trim();
+  if (!configured) {
+    const message =
+      "AUTH_SECRET is not set. Generate one with:\n" +
+      '  node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64url\'))"';
 
-  if (fromEnv) {
-    cachedKey = new TextEncoder().encode(fromEnv);
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        `${message}\nWithout it every restart invalidates every portal session, and a hardcoded ` +
+          `key would be readable by anyone with the source.`
+      );
+    }
+    console.warn(
+      `[portal] ${message}\n[portal] Using a random per-process key; portal sessions end on restart.`
+    );
+    cachedKey = new TextEncoder().encode(randomBytes(32).toString("base64url"));
     return cachedKey;
   }
 
-  if (process.env.NODE_ENV === "production") {
-    throw new Error(
-      "AUTH_SECRET must be set: without it every restart invalidates every session, and a " +
-        'hardcoded key would be readable by anyone with the source.\n' +
-        '  node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64url\'))"'
-    );
+  if (configured.length < 32) {
+    throw new Error("AUTH_SECRET must be at least 32 characters long.");
   }
 
-  console.warn(
-    "[portal] AUTH_SECRET is not set. A random per-process key is being used, so restarting " +
-      "the server signs every portal customer out."
-  );
-  cachedKey = new TextEncoder().encode(randomBytes(32).toString("base64url"));
+  cachedKey = new TextEncoder().encode(configured);
   return cachedKey;
 }
 

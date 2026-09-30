@@ -1099,6 +1099,117 @@ async function main() {
     `  demo portal accounts: ${customers[0]?.username} / portal1, ${customers[1]?.username} / portal2`
   );
 
+  // A support history for the demo customer, so the portal's ticket list and
+  // the staff queue both have something real in them on first load.
+  //
+  // The mix matters more than the volume. A list of only open tickets reads as a
+  // backlog; one of only closed tickets reads as an empty system. One of each,
+  // with a real reply on the open one, is what an operator actually sees.
+  // By username, never by array position: the printed credentials and the
+  // showcase data have to be the same customer, and the position moves whenever
+  // the seed changes.
+  const showcase = await prisma.customer.findFirstOrThrow({
+    where: { username: "nabila1" },
+    select: { id: true, name: true, packageId: true },
+  });
+  const demoCustomer = showcase;
+  {
+    const highest = (await prisma.ticket.aggregate({ _max: { ticketNumber: true } }))._max
+      ?.ticketNumber;
+    let n = Number(/TKT-(\d+)$/.exec(highest ?? "TKT-0")?.[1] ?? 0);
+
+    // An invoice left unpaid, so the portal's overview has something to show.
+    // A customer with a zero balance is technically correct and makes a poor
+    // demonstration: the screen an interested visitor looks at first would say
+    // "Nothing outstanding", which reads as an empty system rather than a
+    // working one. recomputeBalances() at the end of the seed derives
+    // previousDue from this, so the figure is never stored by hand.
+    const unpaid = await prisma.invoice.findFirst({
+      where: { customerId: demoCustomer.id, status: { in: ["Due", "Partial"] } },
+      select: { id: true },
+    });
+    if (!unpaid) {
+      const pkg = await prisma.package.findFirstOrThrow({ orderBy: { monthlyPrice: "asc" } });
+      const issue = addDays(new Date(), -12);
+      const due = addDays(new Date(), 2);
+      await prisma.invoice.create({
+        data: {
+          invoiceNumber: `DEMO-${new Date().getFullYear()}-UNPAID`,
+          customerId: demoCustomer.id,
+          packageId: pkg.id,
+          issueDate: issue,
+          dueDate: due,
+          billingFrom: issue,
+          billingTo: due,
+          amount: pkg.monthlyPrice,
+          total: pkg.monthlyPrice,
+          paid: 0,
+          status: "Due",
+          note: "Deliberately left unpaid so the portal overview has a balance to show.",
+        },
+      });
+    }
+
+    // Keyed on the demo tickets themselves rather than "this customer has no
+    // tickets", because the seed already gives customers tickets and that check
+    // would silently skip the showcase data on every run after the first.
+    const alreadyDemo = await prisma.ticket.count({
+      where: { customerId: demoCustomer.id, category: { in: ["Frequent Disconnection", "Line Problem"] } },
+    });
+    if (alreadyDemo === 0) {
+      const openTicket = await prisma.ticket.create({
+        data: {
+          ticketNumber: `TKT-${String(++n).padStart(6, "0")}`,
+          customerId: demoCustomer.id,
+          subject: "Frequent disconnection every evening around 8pm",
+          problem: "Frequent Disconnection",
+          category: "Frequent Disconnection",
+          description:
+            "For the past four evenings my line drops roughly every twenty minutes between 8pm and 9pm. During the day it is stable, and speeds are fine when it is up.",
+          priority: "High",
+          status: "In Progress",
+        },
+        select: { id: true },
+      });
+      await prisma.ticketComment.create({
+        data: {
+          ticketId: openTicket.id,
+          authorName: "Md Jahangir Alam",
+          body: "Thank you for the detail. That timing points at peak-hour load, so I am checking the OLT port and the upstream link now.",
+        },
+      });
+      await prisma.ticketComment.create({
+        data: {
+          ticketId: openTicket.id,
+          authorName: demoCustomer.name,
+          body: "Thank you. It is worst on Sundays, if that helps.",
+        },
+      });
+
+      const closedTicket = await prisma.ticket.create({
+        data: {
+          ticketNumber: `TKT-${String(++n).padStart(6, "0")}`,
+          customerId: demoCustomer.id,
+          subject: "ONU light blinking red after a power cut",
+          problem: "Line Problem",
+          category: "Line Problem",
+          description: "The red light on my ONU has been on since the power came back.",
+          priority: "Normal",
+          status: "Resolved",
+          resolvedAt: addDays(new Date(), -6),
+        },
+        select: { id: true },
+      });
+      await prisma.ticketComment.create({
+        data: {
+          ticketId: closedTicket.id,
+          authorName: "Md Jahangir Alam",
+          body: "The ONU had lost its registration. I reregistered it remotely and it is back online.",
+        },
+      });
+    }
+  }
+
   console.log("Seeding inventory...");
   await seedInventory(ref, customers, userIds);
 
