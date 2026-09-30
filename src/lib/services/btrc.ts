@@ -122,12 +122,19 @@ export function monthRange(month: string | null | undefined): {
   const from = new Date(year, index - 1, 1);
   if (from.getFullYear() !== year || from.getMonth() !== index - 1) return null;
   // The first instant of the next month, less a millisecond, is the last instant
-  // of this one. `index` is 1-based, so the next month is `index + 1` here;
-  // getting that wrong reports a range one month short, silently.
+  // of this one.
+  //
+  // The arithmetic here is two near-identical subtractions, which is exactly why
+  // it is worth spelling out. `index` is 1-based, so *this* month is `index - 1`.
+  // The month argument of `new Date` is 0-based, so the *next* month is `index` —
+  // not `index + 1`. Writing `index + 1` there makes the range end a whole month
+  // late, and the failure is silent: every figure stays a plausible-looking
+  // count, so the filed return just carries next month's connections and churn.
+  // `tests/btrc.test.mjs` seeds an event in the month on each side to catch it.
   return {
     month,
     from: startOfDay(from),
-    to: new Date(new Date(year, index + 1, 1).getTime() - 1),
+    to: new Date(new Date(year, index, 1).getTime() - 1),
   };
 }
 

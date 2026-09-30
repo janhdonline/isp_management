@@ -37,9 +37,31 @@ import { customerStatusMetrics, listCustomers } from "../src/lib/services/custom
 
 const stamp = Date.now();
 const YEAR = 2031;
-const MONTH = 5; // June, so it can never be the current month
+// MONTH is 1-based, as the "05" in a YYYY-MM key is. A future year, so this
+// month can never be the current one and the figures stay stable as time passes.
+const MONTH = 5; // May
 const MONTH_KEY = `${YEAR}-0${MONTH}`;
+
+// `new Date`'s month argument is 0-based, so the 0-based index of this month is
+// MONTH - 1 and of the *next* month is exactly MONTH. Those two off-by-one traps
+// are the reason the bounds below are named rather than inlined.
+
+// The instant a millisecond *before* a month starts is the last instant of the
+// month before it. Written as a subtraction from a Date, because that is what it
+// is — but re-wrapped in `new Date`, since a bare subtraction yields a number and
+// Prisma will not take one.
+const lastInstantBefore = (d) => new Date(d.getTime() - 1);
+
+const MAY_START = new Date(YEAR, MONTH - 1, 1, 0, 0, 0);
+const MAY_END = lastInstantBefore(new Date(YEAR, MONTH, 1, 0, 0, 0));
+const NEXT_START = new Date(YEAR, MONTH, 1, 0, 0, 0);
+const NEXT_END = lastInstantBefore(new Date(YEAR, MONTH + 1, 1, 0, 0, 0));
+
+/** Mid-morning on a day of the reported month, so no row sits on a boundary. */
 const DAY = (d) => new Date(YEAR, MONTH - 1, d, 10, 0, 0);
+/** The month before and the month after — the two ends a range can leak into. */
+const PREV_DAY = (d) => new Date(YEAR, MONTH - 2, d, 10, 0, 0);
+const NEXT_DAY = (d) => new Date(YEAR, MONTH, d, 10, 0, 0);
 
 const createdCustomerIds = [];
 
@@ -48,18 +70,40 @@ let pkgB;
 let areaX;
 let areaY;
 
-/** Six customers covering both packages, both areas and all three statuses. */
+/** Nine customers: both packages, both areas, all three statuses, events on
+ *  either side of the reported month. */
 const SEED = [
-  { code: "A1", package: "pkgA", area: "areaX", status: "Active", connected: 3, churned: null },
-  { code: "A2", package: "pkgA", area: "areaX", status: "Active", connected: 9, churned: null },
-  { code: "A3", package: "pkgB", area: "areaY", status: "Active", connected: 20, churned: null },
-  { code: "S1", package: "pkgA", area: "areaX", status: "Suspended", connected: 4, churned: null },
-  { code: "D1", package: "pkgB", area: "areaY", status: "Disconnected", connected: 6, churned: 11 },
-  { code: "D2", package: "pkgA", area: "areaX", status: "Disconnected", connected: 12, churned: 25 },
-  // Connected in the previous month: inside the base counts, outside the month's
-  // new-connections figure. Without it the test could not tell the two apart.
-  { code: "OLD", package: "pkgA", area: "areaX", status: "Active", connected: null, churned: null },
+  { code: "A1", package: "pkgA", area: "areaX", status: "Active", connected: DAY(3), churned: null },
+  { code: "A2", package: "pkgA", area: "areaX", status: "Active", connected: DAY(9), churned: null },
+  { code: "A3", package: "pkgB", area: "areaY", status: "Active", connected: DAY(20), churned: null },
+  { code: "S1", package: "pkgA", area: "areaX", status: "Suspended", connected: DAY(4), churned: null },
+  { code: "D1", package: "pkgB", area: "areaY", status: "Disconnected", connected: DAY(6), churned: DAY(11) },
+  { code: "D2", package: "pkgA", area: "areaX", status: "Disconnected", connected: DAY(12), churned: DAY(25) },
+  // Connected in the *previous* month: inside the base counts, outside the month's
+  // new-connections figure. A row on only one side of the month is not enough —
+  // a range that is a month too wide leaks in one way and a month too narrow
+  // leaks in the other, so the seed has to straddle both ends to catch either.
+  { code: "OLD", package: "pkgA", area: "areaX", status: "Active", connected: PREV_DAY(15), churned: null },
+  // Connected in the *next* month, and one that disconnects in it. Both are in
+  // the base snapshot, and neither may appear in May's connections or churn.
+  // Connected in the *next* month, and one that disconnects in it. Both sit in
+  // the base snapshot, and neither may appear in May's connections or churn.
+  { code: "NEXT", package: "pkgA", area: "areaX", status: "Active", connected: NEXT_DAY(4), churned: null },
+  { code: "LATER", package: "pkgB", area: "areaY", status: "Disconnected", connected: NEXT_DAY(6), churned: NEXT_DAY(8) },
 ];
+
+/**
+ * The figures May is expected to report, derived from the seed's own dates.
+ * Deliberately not hand-written numbers: a hardcoded "6" would keep passing after
+ * a row is added to the seed, and a range that quietly widens would go unnoticed
+ * if the expectation moved with it.
+ */
+const IN_MONTH_NEW = SEED.filter(
+  (s) => s.connected >= MAY_START && s.connected <= MAY_END
+).length;
+const IN_MONTH_CHURN = SEED.filter(
+  (s) => s.churned != null && s.churned >= MAY_START && s.churned <= MAY_END
+).length;
 
 async function seed() {
   pkgA = await prisma.package.create({
@@ -105,8 +149,8 @@ async function seed() {
         billingStatus: "Paid",
         packageId: s.package === "pkgA" ? pkgA.id : pkgB.id,
         areaId: s.area === "areaX" ? areaX.id : areaY.id,
-        connectionDate: s.connected ? DAY(s.connected) : new Date(YEAR, MONTH - 2, 15),
-        disconnectedAt: s.churned ? DAY(s.churned) : null,
+        connectionDate: s.connected ?? PREV_DAY(15),
+        disconnectedAt: s.churned,
       },
       select: { id: true },
     });
@@ -142,10 +186,59 @@ describe("the month it reports on", () => {
   test("a month string becomes the first and last instant of that month", () => {
     const range = monthRange(MONTH_KEY);
     assert.ok(range);
-    assert.equal(range.from.getDate(), 1);
-    assert.equal(range.from.getMonth(), MONTH - 1);
-    assert.equal(range.to.getDate(), 30, "June has 30 days, and the range must include all of them");
+    assert.equal(range.from.getFullYear(), YEAR);
+    assert.equal(range.from.getMonth(), MONTH - 1, "May is 0-based month 4");
+    assert.equal(range.from.getDate(), 1, "the month must start on the 1st");
+    assert.equal(range.from.getHours(), 0);
+
+    // May has 31 days. An upper bound of "the 30th" would silently drop a
+    // customer connected on the 31st, and one reading as 0-based June would run
+    // a whole month into July.
+    assert.equal(range.to.getMonth(), MONTH - 1, "the last day must still be in May");
+    assert.equal(range.to.getDate(), 31, "May has 31 days, and the range must include all of them");
     assert.equal(range.to.getHours(), 23);
+    assert.equal(range.to.getMinutes(), 59);
+    assert.equal(range.to.getSeconds(), 59);
+    assert.equal(range.to.getMilliseconds(), 999);
+  });
+
+  test("the range stops at the end of the month, not the end of the next one", () => {
+    // The regression guard for a bound computed as "next month" with the wrong
+    // 0-based index. Every month is checked, because the bug only shows on some
+    // of them if the seed happens to line up.
+    for (let m = 1; m <= 12; m++) {
+      const key = `${YEAR}-${String(m).padStart(2, "0")}`;
+      const range = monthRange(key);
+      assert.ok(range, key);
+      const lastDay = new Date(YEAR, m, 0).getDate();
+
+      assert.equal(range.from.getMonth(), m - 1, `${key} should start in its own month`);
+      assert.equal(range.to.getMonth(), m - 1, `${key} must not run into the following month`);
+      assert.equal(range.to.getDate(), lastDay, `${key} should end on its own last day`);
+      assert.equal(range.to.getFullYear(), YEAR, `${key} should not roll the year over early`);
+    }
+  });
+
+  test("December rolls the year correctly", () => {
+    const range = monthRange(`${YEAR}-12`);
+    assert.ok(range);
+    assert.equal(range.from.getFullYear(), YEAR);
+    assert.equal(range.from.getMonth(), 11);
+    assert.equal(range.to.getFullYear(), YEAR, "the 31st of December is still this year");
+    assert.equal(range.to.getMonth(), 11);
+    assert.equal(range.to.getDate(), 31);
+  });
+
+  test("the range excludes the first instant of the following month", () => {
+    const range = monthRange(MONTH_KEY);
+    assert.ok(range);
+    const firstOfJune = new Date(YEAR, MONTH, 1, 0, 0, 0);
+    assert.ok(
+      range.to.getTime() < firstOfJune.getTime(),
+      "June 1 must fall outside a May report"
+    );
+    const lastOfMay = new Date(YEAR, MONTH - 1, 31, 23, 59, 59, 999);
+    assert.ok(range.to.getTime() >= lastOfMay.getTime(), "and May 31 must fall inside it");
   });
 
   test("an unusable month is empty, not an error", () => {
@@ -240,23 +333,89 @@ describe("the report reconciles with the dashboard and the customer list", () =>
 
   test("new connections and churn are the month's own events", async () => {
     const report = await btrcReport(MONTH_KEY);
-    const from = new Date(YEAR, MONTH - 1, 1, 0, 0, 0);
-    const to = new Date(YEAR, MONTH - 1, 31, 23, 59, 59, 999);
 
-    // Five of the seven seeded rows connect inside the month; one connects in the
-    // month before and must not be counted, and one churned and must be.
-    const expectedNew = SEED.filter((s) => s.connected).length;
-    const expectedChurn = SEED.filter((s) => s.churned).length;
-
+    // The bounds are the ones named at the top of the file, not a second
+    // expression of the same arithmetic — re-deriving the month's end here is how
+    // a test ends up agreeing with the very bug it is meant to catch.
     const [rawNew, rawChurn] = await Promise.all([
-      prisma.customer.count({ where: { connectionDate: { gte: from, lte: to } } }),
-      prisma.customer.count({ where: { disconnectedAt: { gte: from, lte: to } } }),
+      prisma.customer.count({ where: { connectionDate: { gte: MAY_START, lte: MAY_END } } }),
+      prisma.customer.count({ where: { disconnectedAt: { gte: MAY_START, lte: MAY_END } } }),
     ]);
 
-    assert.equal(report.totals.newConnections, expectedNew);
+    assert.equal(
+      report.totals.newConnections,
+      IN_MONTH_NEW,
+      `only the ${IN_MONTH_NEW} rows connected inside May may be counted`
+    );
     assert.equal(report.totals.newConnections, rawNew, "must equal a direct count over the month");
-    assert.equal(report.totals.churn, expectedChurn);
+    assert.equal(report.totals.churn, IN_MONTH_CHURN);
     assert.equal(report.totals.churn, rawChurn);
+  });
+
+  test("next month's events are excluded from this month's figures", async () => {
+    // The bug this file exists to prevent. An upper bound computed as "the next
+    // month" with a 0-based index applied to a 1-based month reaches two months
+    // on, and every number still looks like a subscriber count — so a filing for
+    // May quietly carries June's connections and June's churn.
+    //
+    // The seed puts a connection and a disconnection in the month *after* the one
+    // reported, precisely so a bound that is too wide has something to swallow.
+    const report = await btrcReport(MONTH_KEY);
+
+    const inJune = await prisma.customer.count({
+      where: { connectionDate: { gte: NEXT_START, lte: NEXT_END } },
+    });
+    const churnedInJune = await prisma.customer.count({
+      where: { disconnectedAt: { gte: NEXT_START, lte: NEXT_END } },
+    });
+    assert.ok(inJune > 0, "the seed must have a connection in the following month");
+    assert.ok(churnedInJune > 0, "and a disconnection in it");
+
+    assert.equal(
+      report.totals.newConnections,
+      IN_MONTH_NEW,
+      `May's return must not include June's ${inJune} connection(s)`
+    );
+    assert.equal(
+      report.totals.churn,
+      IN_MONTH_CHURN,
+      `May's return must not include June's ${churnedInJune} disconnection(s)`
+    );
+
+    // Per row, not just in total: a row is what gets read off a filing, and a
+    // total that happens to be right can still come from rows that are not.
+    for (const row of report.rows) {
+      const params = { areaId: row.areaId ?? undefined, packageId: row.packageId ?? undefined };
+      const [rowNew, rowChurn] = await Promise.all([
+        prisma.customer.count({ where: { ...params, connectionDate: { gte: MAY_START, lte: MAY_END } } }),
+        prisma.customer.count({ where: { ...params, disconnectedAt: { gte: MAY_START, lte: MAY_END } } }),
+      ]);
+      assert.equal(
+        row.newConnections,
+        rowNew,
+        `${row.package} / ${row.area}: only May connections belong in the New column`
+      );
+      assert.equal(
+        row.churn,
+        rowChurn,
+        `${row.package} / ${row.area}: only May disconnections belong in the Churn column`
+      );
+    }
+  });
+
+  test("the previous month's events are excluded too", async () => {
+    // The other end. The seed has a connection the month before, and it must not
+    // leak in — otherwise a wide range on both ends would still reconcile.
+    const report = await btrcReport(MONTH_KEY);
+    const before = await prisma.customer.count({
+      where: { connectionDate: { lt: MAY_START } },
+    });
+    assert.ok(before > 0, "the seed must have a connection before the reported month");
+    assert.equal(
+      report.totals.newConnections,
+      IN_MONTH_NEW,
+      "a connection last month is not a connection this month"
+    );
   });
 
   test("a month with nothing in it reports zero rather than last month's figures", async () => {
