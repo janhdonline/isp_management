@@ -137,7 +137,7 @@ export async function createInvoice(
   const vat = round2(input.vat ?? 0);
   const total = round2(Math.max(0, input.amount - discount) + vat);
 
-  return tx.invoice.create({
+  const invoice = await tx.invoice.create({
     data: {
       invoiceNumber,
       customerId: input.customerId,
@@ -153,6 +153,39 @@ export async function createInvoice(
       createdById: input.createdById,
     },
   });
+
+  // The wallet settles what it can, here, inside the transaction that raised the
+  // invoice. Doing it a moment later would leave a window in which the invoice is
+  // unpaid and the customer's balance has already been spent — long enough for an
+  // expiry or FUP sweep to suspend someone who has in fact paid.
+  const consumed = await consumeWalletForNewInvoice(tx, invoice.id, input.customerId);
+  if (consumed > 0) {
+    invoice.paid = round2(consumed);
+    invoice.status = await recomputeInvoiceStatus(tx, invoice.id);
+    // Consumption moved the invoice's `paid` and the customer's `advancePayment` by
+    // the same amount, so the net due is unchanged — but only if it is recomputed
+    // from the invoices rather than incremented. A caller that had already added
+    // the new invoice's total to `previousDue` is now over-counting by exactly the
+    // amount the wallet just paid.
+    await recomputeCustomerBilling(tx, input.customerId);
+  }
+
+  return invoice;
+}
+
+/**
+ * Applies the customer's wallet to a freshly created invoice.
+ *
+ * Kept separate from `wallet.ts` so billing does not import the wallet's
+ * transaction helpers directly: `consumeForInvoice` takes its own row lock, and
+ * calling it from here would re-lock a row this transaction already holds. That is
+ * harmless today but it is one more lock acquisition per invoice than the design
+ * needs.
+ */
+async function consumeWalletForNewInvoice(tx: Tx, invoiceId: string, customerId: string) {
+  const { consumeForInvoice } = await import("@/lib/services/wallet");
+  const result = await consumeForInvoice(tx, { invoiceId, customerId });
+  return result.consumed;
 }
 
 /** Generates the renewal invoice for a customer from their current package. */

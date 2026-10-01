@@ -1296,6 +1296,66 @@ which channel".
 
 ------------------------------------------------------------------------
 
+## 30. Customer Wallet (Advance Balance)
+
+Payments a customer makes ahead of their bills. Previously one number —
+`Customer.advancePayment` — that `netDue` subtracted, with no top-up flow, no
+history and nothing to audit.
+
+**A ledger, and a cached number.** `WalletTransaction` is the truth: one signed
+row per movement, each carrying the balance it produced.
+`Customer.advancePayment` stays as the number the rest of the app reads, and the
+two are written together in a single transaction. There is exactly one function
+that does it (`post()` in `src/lib/services/wallet.ts`), and nothing else writes
+either — that is what makes `SUM(amount) == advancePayment` a property of the
+code rather than something to check afterwards. `npm run verify` runs
+`scripts/check-wallet.mts` on the real database and fails on any drift.
+
+Types, and what each may move the balance by:
+
+| Type | Moves | Backed by |
+|------|-------|-----------|
+| `TopUp` | up | a Payment receipt, always |
+| `InvoiceConsume` | down | an invoice, never more than it is owed |
+| `RefundOut` | down | a reason, clamped at zero |
+| `Adjustment` | either | a mandatory reason — the only hand-typed row |
+
+**Atomicity.** A top-up writes the Payment, the receipt, the account entry, the
+ledger row and the balance in one transaction. That is not tidiness: there is no
+ordering of those writes that leaves the books closed if the process dies between
+two of them, so they are one commit or none.
+
+**Concurrency.** Every movement takes `SELECT … FOR UPDATE` on the customer row
+before reading the balance. Two simultaneous top-ups would otherwise both read
+the same balance and both write the same result, losing one payment's worth and
+leaving ten ledger rows claiming one balance. The lock makes them serialise and
+`balanceAfter` become a real running balance.
+
+**Automatic consumption** happens inside the transaction that raises the invoice —
+in `createInvoice`, and in the monthly run — so a customer who paid in advance is
+never briefly overdue, which is long enough for an expiry or FUP sweep to cut a
+line belonging to someone who has already paid. Capped at the invoice total and
+never past zero.
+
+**Overpayments.** The payment form offers, only when there is a genuine excess,
+to put the remainder in the wallet instead of refusing the payment: one payment,
+one ledger row, the invoice taking what it is owed. Without the option the
+behaviour is unchanged — the payment is refused, because quietly keeping cash that
+settles nothing is how an office ends up holding money it cannot account for.
+
+**Adjustments** require `billing.adjust` — its own permission rather than
+`billing.edit`, because the difference between correcting a customer's name and
+correcting their balance is the difference between a typo and money — a mandatory
+reason, and an audit entry. Refunds go through the refund flow instead, so the
+money leaving is also on the account ledger.
+
+Customers see the same ledger read-only in the portal. The first question a
+support agent asks of someone who says they were never told is "what did we send
+them, when, and down which channel" — the wallet has the same problem, and the
+same answer.
+
+------------------------------------------------------------------------
+
 ## Final Requirement
 
 The final UI must feel like **one unified ISP operating system**, not

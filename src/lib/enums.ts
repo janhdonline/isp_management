@@ -196,6 +196,11 @@ export const PERMISSION_ACTIONS = [
   "Delete",
   "Export",
   "Approve",
+  // Moving money that no payment or invoice explains: a wallet adjustment
+  // (ISP.md §30). Its own action rather than "Edit" because the difference
+  // between correcting a customer's name and correcting their balance is the
+  // difference between a typo and money.
+  "Adjust",
 ] as const;
 
 /** Tailwind class map for status badges. */

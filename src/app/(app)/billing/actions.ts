@@ -16,6 +16,7 @@ import { maybeAutoReconnect } from "@/lib/services/network-enforcement";
 import { cancelInvoice } from "@/lib/services/billing-queries";
 import { prismaLog } from "@/lib/services/activity";
 import { round2 } from "@/lib/utils";
+import { topUp, adjust } from "@/lib/services/wallet";
 
 export type BillingFormState = {
   errors?: FieldErrors;
@@ -26,6 +27,152 @@ export type BillingFormState = {
   receiptNumber?: string;
   invoiceNumber?: string;
 };
+
+/* ------------------------------------------------------------------ */
+/* Wallet (ISP.md §30)                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Tops up a customer's wallet with real cash.
+ *
+ * The Payment, the receipt, the account entry, the wallet ledger row and the
+ * cached balance are all written in one transaction. That is not tidiness — it is
+ * the difference between an office that can reconcile its cash and one that
+ * cannot, because there is no ordering of these writes that leaves the books
+ * closed if the process dies between two of them.
+ */
+export async function walletTopUpAction(
+  _prev: BillingFormState,
+  formData: FormData
+): Promise<BillingFormState> {
+  const session = await requirePermission("payments.create");
+  const customerId = String(formData.get("customerId") ?? "");
+  const amount = round2(Number(formData.get("amount") ?? 0));
+  const method = String(formData.get("method") ?? "Cash");
+  const accountId = String(formData.get("accountId") ?? "");
+  const paymentDateRaw = String(formData.get("paymentDate") ?? "");
+  const note = String(formData.get("note") ?? "").trim();
+
+  const errors: FieldErrors = {};
+  if (!customerId) errors.customerId = ["Customer"];
+  if (!accountId) errors.accountId = ["Account"];
+  if (!(amount > 0)) errors.amount = ["Enter an amount greater than zero"];
+  if (Object.keys(errors).length) {
+    return { errors, formError: "Please fix the highlighted fields." };
+  }
+
+  const paymentDate = paymentDateRaw ? new Date(paymentDateRaw) : new Date();
+  if (Number.isNaN(paymentDate.getTime())) {
+    return { errors: { paymentDate: ["Pick a valid date"] }, formError: "Please fix the highlighted fields." };
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      // No invoice: an advance is not a settlement of anything yet. That is the
+      // whole point of a wallet, and attaching it to an invoice would make the
+      // customer look paid for a bill they have not been billed.
+      const payment = await recordPayment(tx, {
+        customerId,
+        invoiceId: null,
+        amount,
+        discount: 0,
+        method,
+        accountId,
+        paymentDate,
+        note: note || "Wallet top-up",
+        collectedById: session.id,
+      });
+
+      const receipt = await tx.receipt.findFirstOrThrow({ where: { paymentId: payment.id } });
+
+      const wallet = await topUp(tx, {
+        customerId,
+        amount,
+        paymentId: payment.id,
+        note: note || "Wallet top-up",
+        createdById: session.id,
+        reference: payment.paymentId,
+      });
+
+      await prismaLog(
+        tx,
+        {
+          action: "Create",
+          entity: "Payment",
+          entityId: payment.id,
+          summary: `Wallet top-up of ${amount} via ${method} — balance ${wallet.balance}`,
+        },
+        session.id
+      );
+
+      return { payment, receipt, balance: wallet.balance };
+    });
+
+    revalidatePath(`/customers/${customerId}`);
+    revalidatePath("/payments");
+    return {
+      success: `Added ${amount} to the wallet via ${result.payment.method}. Balance is now ${result.balance}. Receipt ${result.receipt.receiptNumber}.`,
+      receiptNumber: result.receipt.receiptNumber,
+      paymentId: result.payment.paymentId,
+    };
+  } catch (e) {
+    return { formError: e instanceof Error ? e.message : "Could not top up the wallet." };
+  }
+}
+
+/**
+ * A hand-typed correction to a wallet balance.
+ *
+ * `billing.adjust`, not `billing.edit`: this is the one operation that moves a
+ * customer's money with no payment and no invoice behind it, and it is audited as
+ * such. A reason is mandatory and validated in the service, not only here, so
+ * every caller is held to it.
+ */
+export async function walletAdjustAction(
+  _prev: BillingFormState,
+  formData: FormData
+): Promise<BillingFormState> {
+  const session = await requirePermission("billing.adjust");
+  const customerId = String(formData.get("customerId") ?? "");
+  const amount = round2(Number(formData.get("amount") ?? 0));
+  const reason = String(formData.get("reason") ?? "").trim();
+
+  const errors: FieldErrors = {};
+  if (!customerId) errors.customerId = ["Customer"];
+  if (!reason) {
+    errors.reason = [
+      "An adjustment needs a reason — it is the only way the wallet moves without a payment or invoice behind it",
+    ];
+  }
+  if (amount === 0 || !Number.isFinite(amount)) errors.amount = ["Enter a non-zero amount"];
+  if (Object.keys(errors).length) {
+    return { errors, formError: "Please fix the highlighted fields." };
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const wallet = await adjust(tx, { customerId, amount, reason, createdById: session.id });
+      await prismaLog(
+        tx,
+        {
+          action: "Adjust",
+          entity: "Customer",
+          entityId: customerId,
+          summary: `Wallet adjusted by ${amount > 0 ? "+" : ""}${amount} — ${reason}. Balance ${wallet.balance}`,
+        },
+        session.id
+      );
+      return wallet;
+    });
+
+    revalidatePath(`/customers/${customerId}`);
+    return {
+      success: `Wallet adjusted by ${amount > 0 ? "+" : ""}${amount}. Balance is now ${result.balance}.`,
+    };
+  } catch (e) {
+    return { formError: e instanceof Error ? e.message : "Could not adjust the wallet." };
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /* Invoices                                                            */
@@ -130,20 +277,36 @@ export async function collectPaymentAction(
         invoiceId = oldest?.id ?? null;
       }
 
+      // An overpayment is either a mistake or a customer paying ahead. With
+      // `excessToWallet` it is the second: the invoice takes what it is owed and
+      // the rest goes to the wallet, as one payment and one ledger row. Without
+      // it, the behaviour is unchanged — the payment is refused, because quietly
+      // keeping cash that settles nothing is how an ISP ends up holding money it
+      // cannot explain.
+      const excessToWallet = formData.get("excessToWallet") === "on";
+      const net = round2(d.amount - (d.discount ?? 0));
+      let invoiceAmount = net;
+      let excess = 0;
+
       if (invoiceId) {
         const inv = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
         const balance = round2(inv.total - inv.paid);
-        const net = round2(d.amount - (d.discount ?? 0));
         if (net > balance + 0.009) {
-          throw new Error(`Amount exceeds the invoice balance of ${balance}`);
+          if (!excessToWallet) {
+            throw new Error(
+              `Amount exceeds the invoice balance of ${balance}. Tick "excess to wallet" if the customer is paying ahead.`
+            );
+          }
+          invoiceAmount = Math.max(0, balance);
+          excess = round2(net - invoiceAmount);
         }
       }
 
       const payment = await recordPayment(tx, {
         customerId: d.customerId,
         invoiceId,
-        amount: d.amount,
-        discount: d.discount,
+        amount: invoiceAmount,
+        discount: invoiceAmount === net ? d.discount : 0,
         method: d.method,
         accountId: d.accountId,
         transactionId: d.transactionId,
@@ -152,6 +315,20 @@ export async function collectPaymentAction(
         collectedById: session.id,
         collectedByResellerId: d.collectedByResellerId ?? null,
       });
+
+      if (excess > 0) {
+        // The wallet row is written in this same transaction, against this same
+        // payment. A receipt with no wallet row behind it is cash the office has
+        // taken for a bill that is not in the ledger.
+        await topUp(tx, {
+          customerId: d.customerId,
+          amount: excess,
+          paymentId: payment.id,
+          note: `Excess from ${payment.paymentId} over the invoice balance`,
+          createdById: session.id,
+          reference: payment.paymentId,
+        });
+      }
 
       const receipt = await tx.receipt.findFirstOrThrow({
         where: { paymentId: payment.id },
@@ -163,7 +340,9 @@ export async function collectPaymentAction(
           action: "Create",
           entity: "Payment",
           entityId: payment.id,
-          summary: `Payment ${payment.paymentId} of ${payment.amount} via ${payment.method}`,
+          summary:
+            `Payment ${payment.paymentId} of ${payment.amount} via ${payment.method}` +
+            (excess > 0 ? ` (${excess} excess to wallet)` : ""),
         },
         session.id
       );

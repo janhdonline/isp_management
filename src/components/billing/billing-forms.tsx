@@ -18,7 +18,7 @@ type Account = { id: string; name: string; type: string; currentBalance: number 
 type CustomerOption = { id: string; name: string; customerCode: string; username: string; phone: string };
 type InvoiceOption = { id: string; invoiceNumber: string; total: number; paid: number; dueDate: Date };
 
-function Alert({ state }: { state: BillingFormState }) {
+export function Alert({ state }: { state: BillingFormState }) {
   if (state.formError) {
     return (
       <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
@@ -85,6 +85,9 @@ export function CollectPaymentForm({
   const selected = invoices.find((i) => i.id === invoiceId);
   const balance = selected ? round2(selected.total - selected.paid) : 0;
   const amount: number | "" = override ?? (selected ? balance : "");
+  // What the payment would actually hand over, for deciding whether there is an
+  // excess worth offering a wallet for.
+  const net = round2((typeof amount === "number" ? amount : 0) - discount);
 
   // Choosing a different invoice or customer resets any manual amount.
   const [lastSelection, setLastSelection] = useState({ customerId, invoiceId });
@@ -144,6 +147,34 @@ export function CollectPaymentForm({
         <Field label="Discount" error={err("discount")}>
           <Input name="discount" type="number" step="0.01" min={0} value={discount} onChange={(e) => setDiscount(Number(e.target.value))} />
         </Field>
+
+        {selected && net > balance + 0.009 ? (
+          // Offered only when there is a genuine excess. Tick it and the invoice
+          // takes what it is owed and the remainder goes to the customer's wallet
+          // as one payment; leave it and the payment is refused, because keeping
+          // cash that settles nothing is how an office ends up holding money it
+          // cannot account for.
+          <div className="sm:col-span-2 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/40">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="excessToWallet"
+                defaultChecked
+                className="mt-0.5 size-4 rounded border-[var(--border-strong)]"
+              />
+              <span>
+                <span className="font-medium text-amber-900 dark:text-amber-200">
+                  Pay the {formatCurrency(round2(net - balance))} excess into the wallet
+                </span>
+                <span className="mt-0.5 block text-xs text-amber-800 dark:text-amber-300">
+                  The invoice takes the {formatCurrency(balance)} it is owed and the rest is
+                  credited to the customer&apos;s wallet against this payment. It is applied
+                  automatically to their next bill.
+                </span>
+              </span>
+            </label>
+          </div>
+        ) : null}
 
         <Field label="Payment Method" required error={err("method")}>
           <Select

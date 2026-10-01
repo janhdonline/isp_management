@@ -47,6 +47,7 @@ model User {
   customers    Customer[]        @relation("CustomerCreatedBy")
   tickets      Ticket[]          @relation("TicketCreator")
   messages     Notification[]    @relation("MessageSender")
+  walletEntries WalletTransaction[]
   resets       PasswordReset[]
   mandatesCreated PaymentMandate[] @relation("MandateCreator")
   backups      Backup[]
@@ -267,6 +268,7 @@ model Customer {
 
   invoices     Invoice[]
   payments     Payment[]
+  walletTransactions WalletTransaction[]
   tickets      Ticket[]
   sessionLogs  OnlineSession[]
   packageLogs  CustomerPackageChange[]
@@ -330,6 +332,7 @@ model Invoice {
 
   payments  Payment[]
   receipts  Receipt[]
+  walletTransactions WalletTransaction[]
   autoCollections AutoCollectionRun[]
 
   @@index([customerId])
@@ -371,6 +374,8 @@ model Payment {
 
   receipt  Receipt?
   ledger   AccountTransaction[]
+  /// Wallet rows this payment funded, or that it topped up from an excess payment.
+  walletTransactions WalletTransaction[]
 
   @@index([customerId])
   @@index([invoiceId])
@@ -1121,6 +1126,53 @@ model RadiusHealth {
   /// When the process last wrote this row. Freshness of this is the health check.
   updatedAt  DateTime @default(now())
   startedAt  DateTime @default(now())
+}
+
+/// The customer wallet (ISP.md §30).
+///
+/// `Customer.advancePayment` is a *cached* balance. This table is the truth: one
+/// row per movement, signed, each carrying the balance it produced. The two are
+/// written together in one transaction and never in separate queries, so a crash
+/// cannot leave a ledger that disagrees with the number the rest of the app reads —
+/// and SUM(amount) per customer equals `advancePayment` by construction, which is
+/// what `verify` asserts.
+///
+/// Types, and what each one is allowed to move:
+///
+///   TopUp           money in, always with a Payment behind it
+///   InvoiceConsume  money out, always against an invoice, never more than it
+///   RefundOut       money back to the customer, never below zero
+///   Adjustment      the only movement without a payment or an invoice, and the
+///                   only one that can be typed by hand — which is exactly why it
+///                   requires a reason
+model WalletTransaction {
+  id          String   @id @default(cuid())
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// TopUp | Adjustment | InvoiceConsume | RefundOut
+  type        String
+  /// Signed: positive adds to the wallet, negative takes from it.
+  amount      Float
+  /// The wallet balance immediately after this row. A running snapshot, so a
+  /// single row answers "what was the balance when this happened" without a sum.
+  balanceAfter Float
+  /// The payment that funded a top-up, the invoice a consumption settled.
+  paymentId   String?
+  payment     Payment?  @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  invoiceId   String?
+  invoice     Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  /// Free-text reference for a movement with neither: an adjustment, or a refund.
+  reference   String?
+  /// Mandatory for an Adjustment, and the reason it is the only hand-typed row.
+  note        String?
+  createdById String?
+  createdBy   User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([type])
+  @@index([paymentId])
+  @@index([invoiceId])
 }
 
 /// Failed sign-in attempts, so a lockout survives a restart and is shared

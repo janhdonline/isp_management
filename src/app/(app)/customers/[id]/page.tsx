@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getCustomerFull, getCustomerActivity } from "@/lib/services/customers";
 import { customerReminders } from "@/lib/services/reminder-queries";
+import { walletHistory } from "@/lib/services/wallet";
+import { prisma as db } from "@/lib/prisma";
+import { WalletPanel } from "@/components/customers/wallet-panel";
 import { prisma } from "@/lib/prisma";
 import { customerCycleUsage } from "@/lib/services/fup";
 import { getAllPackages } from "@/lib/services/packages";
@@ -30,11 +33,16 @@ export default async function CustomerProfilePage({
   const sp = await searchParams;
   const tab = typeof sp.tab === "string" ? sp.tab : "overview";
 
-  const [customer, packages, activity, reminders] = await Promise.all([
+  const [customer, packages, activity, reminders, wallet, accounts, today] = await Promise.all([
     getCustomerFull(id),
     getAllPackages(),
     getCustomerActivity(id, 40),
     customerReminders(id),
+    walletHistory(id, { take: 50 }),
+    db.account.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, type: true } }),
+    Promise.resolve(
+      new Date().toISOString().slice(0, 10)
+    ),
   ]);
 
   if (!customer) notFound();
@@ -46,6 +54,7 @@ export default async function CustomerProfilePage({
 
   const outstandingInvoices = customer.invoices.filter((i) => i.status !== "Paid" && i.status !== "Cancelled");
   const profile = toProfile(customer);
+  const cashAccounts = accounts;
   const nextBilling = customer.expiryDate
     ? new Date(customer.expiryDate.getTime() + 30 * 86400000)
     : null;
@@ -101,6 +110,27 @@ export default async function CustomerProfilePage({
       </PageHeader>
 
       <PageContainer>
+        {tab === "wallet" ? (
+          <WalletPanel
+            customerId={id}
+            balance={customer.advancePayment ?? 0}
+            rows={wallet.map((w) => ({
+              id: w.id,
+              type: w.type,
+              amount: w.amount,
+              balanceAfter: w.balanceAfter,
+              paymentId: w.paymentId,
+              invoiceId: w.invoiceId,
+              reference: w.reference,
+              note: w.note,
+              createdAt: w.createdAt.toISOString(),
+              createdByName: null,
+            }))}
+            accounts={cashAccounts}
+            today={today}
+          />
+        ) : null}
+
         <CustomerProfileTabs
           tab={tab}
           customer={profile}
@@ -113,6 +143,7 @@ export default async function CustomerProfilePage({
           }))}
           activityHref="/settings/users?tab=logs"
           reminders={reminders}
+          walletCount={wallet.length}
           metrics={{
             outstandingInvoices: outstandingInvoices.length,
             outstandingAmount: outstandingInvoices.reduce((s, i) => s + (i.total - i.paid), 0),

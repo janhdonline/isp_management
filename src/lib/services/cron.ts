@@ -96,7 +96,7 @@ export async function generateMonthlyInvoices(): Promise<JobResult> {
 
     await prisma.$transaction(async (tx: Tx) => {
       const invoiceNumber = await nextNumber(tx, "invoice", prefix);
-      await tx.invoice.create({
+      const invoice = await tx.invoice.create({
         data: {
           invoiceNumber,
           customerId: c.id,
@@ -114,10 +114,32 @@ export async function generateMonthlyInvoices(): Promise<JobResult> {
           note: `Automatic ${cycle} billing for ${periodStart.toLocaleDateString("en-GB", { month: "long", year: "numeric" })}`,
         },
       });
-      await tx.customer.update({
-        where: { id: c.id },
-        data: { previousDue: { increment: total } },
+
+      // A customer who paid in advance has already paid this month's bill, and
+      // billing them for it only to have the wallet claw it straight back would
+      // show a customer as overdue in the gap between the two writes. So the
+      // wallet settles the invoice here, in the same transaction that raised it.
+      const { consumeForInvoice } = await import("@/lib/services/wallet");
+      const consumed = await consumeForInvoice(tx, {
+        invoiceId: invoice.id,
+        customerId: c.id,
       });
+
+      if (consumed.consumed > 0) {
+        const { recomputeInvoiceStatus, recomputeCustomerBilling } = await import(
+          "@/lib/services/billing"
+        );
+        await recomputeInvoiceStatus(tx, invoice.id);
+        // Recomputed from the invoices rather than incremented: the wallet paid
+        // part of it, and an `increment` would leave the customer looking arrears
+        // for money they have already handed over.
+        await recomputeCustomerBilling(tx, c.id);
+      } else {
+        await tx.customer.update({
+          where: { id: c.id },
+          data: { previousDue: { increment: total } },
+        });
+      }
     });
 
     created += 1;

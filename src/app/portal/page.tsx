@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requirePortalCustomer } from "@/lib/portal-auth";
 import { syncCustomerBilling } from "@/lib/services/billing";
 import { customerCycleUsage } from "@/lib/services/fup";
+import { walletHistory } from "@/lib/services/wallet";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { PortalShell } from "./portal-shell";
 
@@ -28,6 +29,7 @@ export default async function PortalOverviewPage() {
       fupThrottled: true,
       fupThrottledAt: true,
       previousDue: true,
+      advancePayment: true,
       package: {
         select: {
           name: true,
@@ -45,6 +47,9 @@ export default async function PortalOverviewPage() {
   // the amount they are actually billed — not a second formula that drifts.
   const billing = await syncCustomerBilling(customer.id);
   const usage = await customerCycleUsage(customer.id);
+  // Read-only: the customer can see what they have paid in advance and where it
+  // went, but the only way the balance moves is from the office.
+  const wallet = await walletHistory(customer.id, { take: 10 });
 
   const due = billing.due;
   const overdue = billing.billingStatus === "Overdue";
@@ -87,6 +92,64 @@ export default async function PortalOverviewPage() {
           </p>
         </div>
       </div>
+
+      <section className="portal-card mt-4">
+        <p className="portal-card__title">Wallet</p>
+        <p className="portal-card__hint">
+          Money you have paid in advance. It is applied to your bill automatically when the
+          next one is raised.
+        </p>
+        <p className="portal-metric__value tnum mt-2">{formatCurrency(customer.advancePayment ?? 0)}</p>
+
+        {wallet.length > 0 ? (
+          <table className="mt-3 w-full text-xs">
+            <thead>
+              <tr className="text-left text-fg-subtle">
+                <th className="py-1">Date</th>
+                <th className="py-1">Details</th>
+                <th className="py-1 text-right">Amount</th>
+                <th className="py-1 text-right">Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {wallet.map((w) => (
+                <tr key={w.id} className="border-t border-[var(--border)]">
+                  <td className="whitespace-nowrap py-1.5 text-fg-muted">
+                    {formatDate(w.createdAt)}
+                  </td>
+                  <td className="py-1.5">
+                    <span className="capitalize">
+                      {w.type === "InvoiceConsume"
+                        ? "Applied to a bill"
+                        : w.type === "TopUp"
+                          ? "Top-up"
+                          : w.type === "RefundOut"
+                            ? "Refund"
+                            : "Adjustment"}
+                    </span>
+                    {w.reference ? (
+                      <span className="ml-1 text-fg-subtle">({w.reference})</span>
+                    ) : null}
+                  </td>
+                  <td
+                    className={`tnum py-1.5 text-right font-medium ${
+                      w.amount >= 0
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-red-600 dark:text-red-400"
+                    }`}
+                  >
+                    {w.amount >= 0 ? "+" : ""}
+                    {formatCurrency(w.amount)}
+                  </td>
+                  <td className="tnum py-1.5 text-right">{formatCurrency(w.balanceAfter)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="mt-2 text-xs text-fg-subtle">No wallet activity yet.</p>
+        )}
+      </section>
 
       {customer.fupThrottled ? (
         <div className="portal-card mt-4" style={{ borderColor: "var(--gold-400, #c99b3f)" }}>

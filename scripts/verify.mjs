@@ -18,6 +18,7 @@
 // and this script is meant to run against a deployed server too. A missing file
 // is not a reason to refuse to run.
 import { readFileSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -806,6 +807,29 @@ console.log("\nPayment reminders (Phase F)");
 
   const navHtml = (await api("/notifications")).body;
   check("Reminders is in the notifications nav", String(navHtml).includes("Reminders"));
+}
+
+/* ---------------------------------------------------------------- */
+console.log("\nCustomer wallet (Phase G)");
+{
+  const drift = spawnSync("npx", ["tsx", "scripts/check-wallet.mts"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 120_000,
+  });
+  const out = `${drift.stdout ?? ""}${drift.stderr ?? ""}`.trim().split("\n").slice(-3).join(" ");
+  // The ledger has to sum to the cached balance for every customer. It is a
+  // property of the transaction rather than something to enforce afterwards, and
+  // this is what proves it still holds on a real database rather than in a test.
+  check(
+    "every customer's wallet ledger reconciles with their balance",
+    drift.status === 0 && /no drift/.test(out),
+    out || `check-wallet exited ${drift.status}`
+  );
+
+  const walletTab = await api("/customers");
+  const list = typeof walletTab.body === "string" ? walletTab.body : "";
+  check("the customer list renders for the wallet drill-in", list.length > 0);
 }
 
 console.log(`\n${"─".repeat(46)}`);

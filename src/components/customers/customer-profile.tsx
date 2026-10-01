@@ -133,6 +133,20 @@ type Customer = {
  * agent asked "has this person been told their bill is due" needs the reminder
  * trail on the profile, not a message list they have to know how to filter.
  */
+/** One wallet ledger row, as the profile and the portal render it. */
+export type WalletLedgerRow = {
+  id: string;
+  type: string;
+  amount: number;
+  balanceAfter: number;
+  paymentId: string | null;
+  invoiceId: string | null;
+  reference: string | null;
+  note: string | null;
+  createdAt: string;
+  createdByName: string | null;
+};
+
 export type ReminderRow = {
   id: string;
   idempotencyKey: string | null;
@@ -206,6 +220,7 @@ export function CustomerProfileTabs({
   activity,
   activityHref,
   reminders,
+  walletCount,
   metrics,
   fup,
 }: {
@@ -214,6 +229,7 @@ export function CustomerProfileTabs({
   activity: ActivityRow[];
   activityHref: string;
   reminders: ReminderRow[];
+  walletCount: number;
   fup: FupUsage;
   metrics: {
     outstandingInvoices: number;
@@ -234,6 +250,12 @@ export function CustomerProfileTabs({
     { value: "complaints", label: "Complaints", href: href("complaints"), count: customer.tickets.length },
     { value: "usage", label: "Usage", href: href("usage"), count: customer.sessionLogs.length },
     { value: "reminders", label: "Reminders", href: href("reminders"), count: reminders.length },
+    {
+      value: "wallet",
+      label: "Wallet",
+      href: href("wallet"),
+      count: walletCount,
+    },
     { value: "history", label: "History", href: href("history") },
   ];
 
