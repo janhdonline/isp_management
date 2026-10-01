@@ -11,6 +11,7 @@ const JOBS = [
   "network",
   "fup",
   "backup",
+  "radiusLogs",
 ] as const;
 
 /**

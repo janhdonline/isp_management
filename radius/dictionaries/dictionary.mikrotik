@@ -1,0 +1,22 @@
+# MikroTik vendor attributes.
+#
+# Only what this server sends on an Access-Accept. The `radius` package ships the
+# RFC dictionaries but no vendor ones, and Mikrotik-Rate-Limit is how a MikroTik
+# applies a PPP rate limit without the RouterOS API — it is the whole reason an ISP
+# runs RADIUS instead of provisioning every secret by hand.
+#
+# Syntax is the FreeRADIUS one the package's parser reads. Note the vendor id is
+# repeated on every VENDORATTR line: the parser takes
+# `VENDORATTR <vendor-id> <name> <attribute-id> <type>` and does not inherit the
+# enclosing BEGIN-VENDOR block for it.
+
+VENDOR MikroTik 14988
+
+BEGIN-VENDOR MikroTik
+
+VENDORATTR 14988 Mikrotik-Rate-Limit 8 string
+VENDORATTR 14988 Mikrotik-Recv-Limit 9 integer
+VENDORATTR 14988 Mikrotik-Host-IP 16 ipaddr
+VENDORATTR 14988 Mikrotik-Group 24 string
+
+END-VENDOR MikroTik

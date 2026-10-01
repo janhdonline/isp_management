@@ -953,7 +953,9 @@ ISP MANAGEMENT SYSTEM
 │   ├── Routers
 │   ├── OLT
 │   ├── ONU
-│   └── Bandwidth
+│   ├── Bandwidth
+│   ├── Enforcement
+│   └── RADIUS Live
 │
 ├── Support
 │   ├── Tickets
@@ -1132,6 +1134,85 @@ other exports. Read-only — generating or exporting a return writes nothing.
 An empty or unparseable month gives an empty report, not an error: a cleared
 month picker is a normal state, and reporting the wrong month because a
 parameter was dropped is the worse failure.
+
+------------------------------------------------------------------------
+
+## 28. RADIUS (Embedded AAA)
+
+An authoritative RADIUS server in this repository: routers ask it who may
+connect, it answers from the customer table, and it can end a session the moment
+the office suspends someone.
+
+**Process model.** A separate Node process, `radius/`, started with
+`npm run radius`, sharing only the database. In development it runs beside
+`npm run dev`. In production, a systemd unit is in the README.
+
+RADIUS is UDP — 1812 authentication, 1813 accounting, 3799 CoA — so it cannot be
+a Next.js route handler. A route has no way to see a datagram's source port,
+cannot bind a second listener, and sits behind a TCP stack a MikroTik does not
+speak. Separating it also means an operator's login spike cannot slow down
+rendering an invoice, and a bug in a request handler cannot take authentication
+offline.
+
+**Authentication.** On Access-Request, the credential is checked against the
+stored customer password, then the account's state decides:
+
+- PAP, CHAP and MS-CHAPv2 — the last being what a MikroTik PPPoE server
+  negotiates. MD4 and DES are reached through local implementations because
+  modern OpenSSL ships both disabled; both are checked against published vectors
+  (RFC 1320 for MD4, FIPS 81 for DES) rather than trusted.
+- Access-Accept carries **Mikrotik-Rate-Limit** as `<down>M/<up>M` from the
+  package's speeds, and **Session-Timeout** = seconds until expiry, capped at a
+  day. The rate limit is the point: it is what removes the need to provision a
+  PPP secret per subscriber. Down is first because that is how a MikroTik reads
+  the pair.
+- Refusal requires Active status, an unexpired date within the billing grace
+  period, and no outstanding dues.
+- Every refusal carries one identical Reply-Message. An unknown user is refused
+  exactly as a wrong password is: a Reject that distinguished the two would turn
+  port 1812 into a user-enumeration oracle.
+
+**Accounting.** One row per session, keyed on the NAS's `Acct-Session-Id`.
+
+Interim-Update is the part most likely to be wrong. Accounting is UDP, so a NAS
+that does not get a response resends, and a resend carries the same *cumulative*
+totals. Treating them as deltas inflates a customer's usage — a bug nobody
+reports. So an update whose sequence is not newer than the stored one is ignored,
+a Start upserts rather than inserts, and a Stop is a final statement applied
+whatever sequence it carries. Sessions a router forgot to close are reaped after
+five idle minutes, because an unclosed row looks live forever and every later
+suspension would try to disconnect a session that ended at a reboot.
+
+**PoD.** Suspension of a connected customer on a RADIUS router sends an RFC 5176
+Disconnect-Request to `network.nasCoaPort`, per live session, reporting each
+result separately. Accounting is what makes this possible — the request has to
+name the NAS and the session id, and only accounting knows either. Routers with
+RADIUS off keep the RouterOS API path unchanged, and Phase A's DB lifecycle,
+outbox and retry ladder are untouched.
+
+**Security.** Packets are answered only from a `Router.ipAddress` with RADIUS
+switched on — the allowlist is the router table, because a separate IP list drifts
+from it. A stranger's packet is dropped and logged, never answered: a Reject
+would confirm to a prober that a RADIUS server is listening. Per-NAS rate
+limiting stops one router in a fault loop from saturating the process. The shared
+secret and passwords are never logged.
+
+**Router.useRadius**, default false. Off means zero behaviour change: the
+RouterOS API remains the mechanism for every router not converted. Turned on,
+this application answers every PPPoE login for that router's subscribers.
+
+**Network → RADIUS Live**: a terminal-style stream of accepts, rejects,
+accounting, disconnects and drops, fed by SSE with a cursor-based reconnect, with
+event-type filters, search, pause and auto-scroll. A heartbeat row written every
+15 seconds drives the health widget — UP while fresh, **DOWN** after 60 seconds,
+because a dead process must not read as stale-UP. A permission-checked test-auth
+button sends a real Access-Request so a new router's secret can be proven in
+seconds; the password is never stored or logged.
+
+`radius.logRetentionDays` (default 7) and an idempotent `pruneRadiusLogs` cron
+job keep the log bounded, with a hard cap in the writer as a backstop.
+
+docs/radius-mikrotik.md is the operator guide.
 
 ------------------------------------------------------------------------
 

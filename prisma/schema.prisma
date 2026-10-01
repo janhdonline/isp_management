@@ -511,6 +511,20 @@ model Router {
   /// (Phase A) is not gated by this, because a customer the office has decided
   /// to cut off should be cut off regardless.
   autoProvision Boolean @default(false)
+  /// Whether this router authenticates subscribers against this app's RADIUS
+  /// server rather than against PPP secrets on the router itself.
+  ///
+  /// Off by default, like `autoProvision`, and for the same reason: a router must
+  /// be moved onto RADIUS deliberately, one at a time, because the switch changes
+  /// where an ISP's entire authentication lives. With it off, everything behaves
+  /// exactly as before — the RouterOS API path is untouched and remains the
+  /// fallback for routers not yet converted.
+  ///
+  /// Once on, the router has no subscriber secrets to disable: a suspension is
+  /// enforced by this app answering the next Access-Request with Access-Reject,
+  /// and by a Disconnect-Request dropping the live session. That is a stronger
+  /// guarantee than a disabled secret, which only takes effect at next login.
+  useRadius   Boolean   @default(false)
   status      String    @default("Unknown") // Online | Offline | Unknown
   cpu         Float?
   ram         Float?
@@ -1001,6 +1015,97 @@ model Reseller {
   payments  Payment[] @relation("PaymentReseller")
 
   @@index([status])
+}
+
+/* ------------------------------------------------------------------ */
+/* RADIUS (ISP.md §28)                                                 */
+/* ------------------------------------------------------------------ */
+
+/// One RADIUS session, keyed by the session id the NAS generated.
+///
+/// Not a log: a row here means traffic was or is being carried, and the octets
+/// are what the FUP allowance and the usage report are computed from. It is keyed
+/// on `acctSessionId` and not on the username because a subscriber reconnects —
+/// a customer who drops their link overnight gets a new session id, and treating
+/// that as a continuation would merge two sessions' octets into one figure and
+/// understate their usage.
+///
+/// `seq` is the last Acct-Session-Time seen, and it is what makes Interim-Update
+/// idempotent. RADIUS accounting is UDP: a NAS that does not get a response
+/// resends, and resending is normal rather than exceptional. Counting the same
+/// Interim-Update twice would inflate a customer's traffic, so an update carrying a
+/// sequence at or below the stored one is ignored. A `Stop` is a final statement,
+/// not a counter, and is applied whatever sequence it carries.
+model RadiusAccounting {
+  id             String    @id @default(cuid())
+  username       String
+  /// The NAS's own identifier for the session. Unique, because it is what a
+  /// Disconnect-Request has to name.
+  acctSessionId  String    @unique
+  nasIp          String
+  /// What the NAS calls itself, when it says. Informational.
+  nasIdentifier  String?
+  /// Acct-Status-Type: Start | Interim-Update | Stop
+  status         String    @default("Start")
+  /// First Acct-Session-Time reported, in seconds. Kept separate from `seq` so
+  /// the original figure survives a later update overwriting it.
+  startedAt      DateTime  @default(now())
+  /// Set by a Stop. Null means the session is live, which is exactly the
+  /// predicate `sendDisconnect` looks for.
+  stoppedAt      DateTime?
+  /// Last Acct-Session-Time seen, in seconds.
+  seq            Int       @default(0)
+  inputOctets    BigInt    @default(0)
+  outputOctets   BigInt    @default(0)
+  framedIpAddress String?
+  callingStationId String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([username])
+  /// Serves "which of this customer's sessions are live" on every suspension.
+  @@index([stoppedAt])
+}
+
+/// A line in the RADIUS Live terminal.
+///
+/// Bounded on purpose. An unauthenticated RADIUS packet can arrive from the
+/// internet, and an ISP-sized access log is millions of rows a month; an
+/// unbounded table is a slow disk, not a log. `pruneRadiusLogs` deletes rows past
+/// the retention in Settings, and the writer refuses to grow the table past the
+/// hard cap even if the job has not run.
+model RadiusLog {
+  id     Int      @id @default(autoincrement())
+  /// accept | reject | accounting | disconnect | dropped
+  type   String
+  /// Access-Accept | Access-Reject | Start | Interim-Update | Stop | Disconnect-ACK
+  outcome String?
+  username String?
+  nasIp   String?
+  /// What to show. Never a secret and never a password: a RADIUS log that
+  /// contains either is a credential leak with a UI.
+  message String
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([type, createdAt])
+}
+
+/// The RADIUS process's heartbeat.
+///
+/// One row, rewritten every 15 seconds. A process that has died stops rewriting
+/// it, and the age of the row is the only honest answer to "is the RADIUS server
+/// up" — there is no other way to ask a UDP listener that is not currently
+/// talking to anyone. A stale row must read as DOWN, not as the last known state.
+model RadiusHealth {
+  /// Fixed id: there is one RADIUS process per database.
+  id         String   @id @default("radius")
+  /// Monotonic packets received, so a rate can be derived from two reads.
+  packetsIn  Int      @default(0)
+  packetsOut Int      @default(0)
+  /// When the process last wrote this row. Freshness of this is the health check.
+  updatedAt  DateTime @default(now())
+  startedAt  DateTime @default(now())
 }
 
 /// Failed sign-in attempts, so a lockout survives a restart and is shared

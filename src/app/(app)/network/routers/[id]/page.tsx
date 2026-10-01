@@ -5,6 +5,7 @@ import { TriangleAlert } from "lucide-react";
 import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import { RouterDetailView } from "@/components/network/network-tables";
 import { AutoProvisionToggle } from "@/components/network/auto-provision-toggle";
+import { RadiusToggle } from "@/components/network/radius-toggle";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,15 @@ export default async function RouterDetailPage({ params }: { params: Promise<{ i
           routerId={data.router.id}
           routerName={data.router.name}
           enabled={data.router.autoProvision}
+        />
+        {/* Next to it rather than on another page: the two switches describe the
+            same decision from opposite ends — whether this app manages secrets on
+            the router, or answers logins for it. An operator setting up a router
+            has both in view. */}
+        <RadiusToggle
+          routerId={data.router.id}
+          routerName={data.router.name}
+          enabled={data.router.useRadius}
         />
         <RouterDetailView
           router={{

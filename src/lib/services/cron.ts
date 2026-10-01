@@ -8,6 +8,7 @@ import { round2, startOfDay, addDays } from "@/lib/utils";
 import { prismaLog } from "@/lib/services/activity";
 import { enforceSetProfile } from "@/lib/services/network-enforcement";
 import type { Tx } from "@/lib/counter";
+import type { JobResult } from "@/lib/services/job-result";
 
 /**
  * The recurring work. Kept out of the request path so it can be driven by
@@ -20,7 +21,7 @@ import type { Tx } from "@/lib/counter";
  * done its work for the period it is being asked about.
  */
 
-export type JobResult = { ran: number; skipped: string; note?: string };
+export type { JobResult };
 
 /* ------------------------------------------------------------------ */
 /* 1. Monthly invoice generation                                       */
@@ -652,6 +653,22 @@ async function notifyFupExceeded(
   }
 }
 
+/**
+ * Prunes the RADIUS Live log (Phase W).
+ *
+ * Not written inline below because it is the one job that can be expensive, and
+ * keeping it in its own module makes it obvious that it deletes rows rather than
+ * writing them.
+ */
+export async function pruneRadiusLogs(): Promise<JobResult> {
+  const { pruneRadiusLogs: run } = await import("@/lib/services/radius-prune");
+  return run();
+}
+
+/* ------------------------------------------------------------------ */
+/* Entry point                                                         */
+/* ------------------------------------------------------------------ */
+
 export async function runAllJobs() {
   const started = Date.now();
   const results: Record<string, JobResult | { error: string }> = {};
@@ -665,6 +682,7 @@ export async function runAllJobs() {
     network: syncNetwork,
     fup: enforceFup,
     backup: runScheduledBackup,
+    radiusLogs: pruneRadiusLogs,
   })) {
     try {
       results[name] = await job();

@@ -55,12 +55,59 @@ export async function disconnectUserAction(customerId: string): Promise<NetActio
 }
 
 /**
- * Grants or withdraws this app's permission to write PPP secrets on a router.
+ * Grants or withdraws this router's RADIUS opt-in.
  *
- * Requires `network.edit` rather than `network.view`, and is audit-logged: this
- * is the switch that lets the system create and delete credentials on a piece of
- * hardware, so "who turned this on, and when" needs to be answerable later.
+ * Requires `network.edit` rather than `network.view`, and is audit-logged,
+ * because the switch decides where an ISP's authentication happens: with it on,
+ * this app answers every PPPoE login for the subscribers behind this router, and
+ * its suspension logic is what cuts them off.
+ *
+ * The wording on the log line matters — "useRadius" would not say what changed,
+ * and an operator reading the audit trail in six months needs to know the router
+ * started authenticating through here.
  */
+export async function setRouterRadiusAction(
+  id: string,
+  enabled: boolean
+): Promise<NetActionState> {
+  try {
+    const session = await requirePermission("network.edit");
+    const { prisma } = await import("@/lib/prisma");
+    const router = await prisma.router.findUnique({
+      where: { id },
+      select: { id: true, name: true, useRadius: true },
+    });
+    if (!router) return { formError: "That router no longer exists." };
+
+    if (router.useRadius === enabled) {
+      return { success: `Nothing to change — ${router.name} already ${enabled ? "uses" : "does not use"} RADIUS.` };
+    }
+
+    await prisma.router.update({ where: { id }, data: { useRadius: enabled } });
+    // The NAS allowlist is cached in the RADIUS process for 15 seconds, and a
+    // router that has just been enrolled would be refused for that long. Noted
+    // rather than fixed from here: the cache lives in a different process, and
+    // the worst case is one dropped packet on a router that is not logging in yet.
+    await logActivity(
+      {
+        action: enabled ? "Enable" : "Disable",
+        entity: "Router",
+        entityId: id,
+        summary: enabled
+          ? `RADIUS turned on for ${router.name} — PPPoE logins for its subscribers are now answered by this application, and suspensions are enforced by CoA`
+          : `RADIUS turned off for ${router.name} — its PPPoE logins are no longer answered by this application, and enforcement goes back to the RouterOS API`,
+      },
+      session.id
+    );
+
+    revalidatePath("/network");
+    revalidatePath("/network/routers");
+    revalidatePath(`/network/routers/${id}`);
+    return { success: enabled ? "RADIUS is on." : "RADIUS is off." };
+  } catch (e) {
+    return { formError: e instanceof Error ? e.message : "Could not change the setting" };
+  }
+}
 export async function setRouterAutoProvisionAction(
   id: string,
   enabled: boolean

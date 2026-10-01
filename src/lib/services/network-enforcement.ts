@@ -392,6 +392,7 @@ async function runEnforcement(
           useSsl: true,
           sessionSource: true,
           autoProvision: true,
+          useRadius: true,
         },
       },
     },
@@ -464,6 +465,22 @@ async function runEnforcement(
           payload: profile ?? null,
         },
       });
+
+  // Phase W: a router on RADIUS has no subscriber secret to disable, because it
+  // never had one — the Access-Request is answered by this app. The status
+  // change that triggered this action is therefore the whole enforcement: the
+  // next login is rejected automatically, from the moment the column was written.
+  //
+  // What is left is the session open *right now*, and CoA is the only thing that
+  // ends it. Placed after the queue row is written, so a router that is
+  // unreachable leaves a Pending row the retry job picks up — the same ladder
+  // every other action uses, unchanged.
+  //
+  // Routers with `useRadius` off are untouched and fall through to the RouterOS
+  // path below, which remains the mechanism for every router not yet converted.
+  if (customer.router.useRadius && (action === "suspend" || action === "reconnect")) {
+    return runRadiusEnforcement(row.id, customer, customer.router.name, action, enabled, userId);
+  }
 
   let adapter: NetworkAdapter;
   try {
@@ -546,6 +563,63 @@ async function runEnforcement(
     action,
     userId
   );
+}
+
+/**
+ * Phase W: enforcement against a router that authenticates through this app.
+ *
+ * A `suspend` sends a Disconnect-Request for every live session; a `reconnect`
+ * has nothing to do on the network, because the next Access-Request will be
+ * accepted now that the column says Active. Both are recorded so the audit trail
+ * reads the same as it always has, and both are written to the existing queue
+ * row rather than to a new one — the retry ladder, the backoff and the attempt
+ * count are Phase A's and are not duplicated here.
+ */
+async function runRadiusEnforcement(
+  actionId: string,
+  customer: { id: string; name: string; username: string },
+  routerName: string,
+  action: NetworkActionType,
+  enabled: boolean,
+  userId: string | undefined
+): Promise<EnforcementResult> {
+  if (enabled) {
+    // Nothing to restore on a RADIUS router: access is decided at authentication
+    // time, and the customer is Active again. Saying so plainly is better than a
+    // "done" that implies a packet was sent.
+    return resolve(
+      actionId,
+      "Done",
+      `${customer.username} is Active again; the next PPPoE login will be accepted by RADIUS.`,
+      customer,
+      action,
+      userId
+    );
+  }
+
+  try {
+    const { sendDisconnect } = await import("@/lib/services/radius-client");
+    const result = await sendDisconnect(customer.username);
+
+    if (!result.ok) {
+      // Left Pending, not Failed: the customer's line is already refused at the
+      // next login, and the live session will be dropped by the retry job. This is
+      // Phase A's rule — a router that is unreachable must never un-suspend
+      // anybody — and it is why this returns rather than throws.
+      return resolve(actionId, "Retry", result.detail, customer, action, userId);
+    }
+
+    return resolve(
+      actionId,
+      "Done",
+      `Disconnected ${customer.username} on ${routerName} by RADIUS CoA. ${result.detail}`,
+      customer,
+      action,
+      userId
+    );
+  } catch (e) {
+    return resolve(actionId, "Retry", describe(e), customer, action, userId);
+  }
 }
 
 function describeOutcome(action: NetworkActionType, enabled: boolean): string {
@@ -753,6 +827,7 @@ async function retryOrphanedRemoval(row: {
           useSsl: true,
           sessionSource: true,
           autoProvision: true,
+          useRadius: true,
         },
       })
     : null;

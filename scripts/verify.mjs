@@ -421,7 +421,9 @@ console.log("\nbackground jobs");
     check("cron runs with a valid token", first.status === 200, `got ${first.status}`);
     check(
       "cron reports every job",
-      ["invoices", "expiry", "messages", "backup"].every((k) => k in (firstBody.results ?? {})),
+      ["invoices", "expiry", "messages", "backup", "radiusLogs"].every(
+        (k) => k in (firstBody.results ?? {})
+      ),
       JSON.stringify(firstBody.results ?? {})
     );
 
@@ -436,6 +438,13 @@ console.log("\nbackground jobs");
     check("a repeated run suspends nothing twice", r.expiry?.ran === 0, `ran=${r.expiry?.ran}`);
     check("a repeated run resends nothing", r.messages?.ran === 0, `ran=${r.messages?.ran}`);
     check("a repeated run takes no second backup", r.backup?.ran === 0, `ran=${r.backup?.ran}`);
+    // The prune is idempotent for the same reason: the cron endpoint is reachable
+    // from three schedulers, and firing it twice must not matter.
+    check(
+      "a repeated run prunes no further log lines",
+      r.radiusLogs?.ran === 0,
+      `ran=${r.radiusLogs?.ran}`
+    );
   }
 }
 
@@ -697,6 +706,65 @@ console.log("\ncustomer portal + resellers (Phase D)");
   const body = typeof commission.body === "string" ? "" : commission.body;
   void body;
   check("the commission report renders", commission.status === 200, `got ${commission.status}`);
+}
+
+/* ---------------------------------------------------------------- */
+console.log("\nRADIUS (Phase W)");
+{
+  const page = await api("/network/radius");
+  check("the RADIUS Live page renders", page.status === 200, `got ${page.status}`);
+
+  const html = typeof page.body === "string" ? page.body : JSON.stringify(page.body);
+  // The health widget has to state DOWN as plainly as UP, because a dead RADIUS
+  // process takes every PPPoE login with it and a dashboard that reads it as
+  // healthy hides the only thing worth knowing.
+  check("the page shows a RADIUS health verdict", /RADIUS is (running|DOWN)/.test(html));
+  check("the page offers the test-auth control", /test auth/i.test(html));
+  check(
+    "the page states what DOWN means",
+    /No heartbeat|has never run|npm run radius/.test(html),
+    "a stale process must say how to fix it"
+  );
+
+  // Session-gated: a subscriber list by IP is not something an anonymous
+  // request should be able to tail.
+  const anonStream = await fetch(`${BASE}/api/network/radius/stream`, {
+    headers: { accept: "text/event-stream" },
+  });
+  check("the log stream requires a session", anonStream.status === 401, `got ${anonStream.status}`);
+
+  const anonTest = await fetch(`${BASE}/api/network/radius/test-auth`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "x", password: "y" }),
+  });
+  check("test-auth requires a session", anonTest.status === 401, `got ${anonTest.status}`);
+
+  // Which permission it demands, asserted from the source. Every seeded role
+  // holds a Network grant — the Technician role gets View/Edit/Create on Network by
+  // design — so there is no seeded account that *should* be refused here, and a
+  // 403 check would have to mutate the database to manufacture one. Reading the
+  // gate instead keeps this script read-only, which is the property that matters:
+  // it is a check of a running system, not an editor.
+  const routeSource = readFileSync(
+    join(root, "src/app/api/network/radius/test-auth/route.ts"),
+    "utf8"
+  );
+  check(
+    "test-auth is gated on network.edit, not network.view",
+    /requirePermission\(\s*"network\.edit"/.test(routeSource),
+    "expected requirePermission(\"network.edit\")"
+  );
+  check(
+    "test-auth does not echo the password back",
+    !/password\s*:\s*password/.test(routeSource) && !/json\.stringify\([^)]*password/.test(routeSource),
+    "the response body must never carry the submitted password"
+  );
+
+  // The nav entry, so the page is reachable rather than merely present.
+  const nav = await api("/network");
+  const navHtml = typeof nav.body === "string" ? nav.body : "";
+  check("RADIUS Live is in the network nav", navHtml.includes("RADIUS Live"));
 }
 
 console.log(`\n${"─".repeat(46)}`);

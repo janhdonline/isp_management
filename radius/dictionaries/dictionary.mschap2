@@ -1,0 +1,32 @@
+# Microsoft vendor attributes for MS-CHAP and MS-CHAPv2.
+#
+# The `radius` package ships the RFC dictionaries but not Microsoft's, and these
+# are the two attributes a MikroTik PPPoE server negotiates by default — so
+# without this file a RADIUS server answers every login with Access-Reject and
+# the reason is a silently unknown attribute rather than a wrong password.
+#
+# Deliberately typed `octets`, never `encrypt=1`. `encrypt=1` tells the package to
+# run the RADIUS User-Password cipher (MD5 of the secret chained with the
+# request authenticator) over the value, which is a completely different
+# algorithm from what a CHAP response is. Applying it would "decrypt" the
+# challenge into nonsense and make every CHAP login fail for a reason that looks
+# like a bad password. A CHAP response is transmitted in the clear, like PAP, and
+# the security comes from the challenge it answers — not from the transport.
+
+VENDOR Microsoft 311
+
+BEGIN-VENDOR Microsoft
+
+# RFC 2439 — MS-CHAP
+VENDORATTR 311 MS-CHAP-Challenge 11 octets
+VENDORATTR 311 MS-CHAP-Response 1 octets
+
+# RFC 2759 — MS-CHAPv2
+VENDORATTR 311 MS-CHAP2-Challenge 25 octets
+VENDORATTR 311 MS-CHAP2-Response 1 octets
+VENDORATTR 311 MS-CHAP2-Verify 11 octets
+
+# RFC 3079 / 2439 — the peer challenge MS-CHAP2 sends back in its Access-Challenge
+VENDORATTR 311 MS-Peer-Challenge 16 octets
+
+END-VENDOR Microsoft

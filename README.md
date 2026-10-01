@@ -59,16 +59,107 @@ Open <http://localhost:3000> and sign in:
 npm run db:pg         # start the local PostgreSQL (leave running)
 npm run db:pg:fresh   # same, but wipe the cluster first
 npm run dev           # dev server
+npm run radius        # the RADIUS server (separate process — see "The RADIUS server")
 npm run build         # production build
 npm run start         # serve the production build
 npm run lint          # eslint
-npm test              # 109 unit tests: inventory, provisioning, enforcement, gateway, RouterOS, refunds, shifts, reset, PDF, rate limit
+npm test              # unit tests: inventory, provisioning, enforcement, gateway, RouterOS, refunds, shifts, reset, PDF, rate limit, BTRC, RADIUS
 npm run setup         # prisma migrate deploy + seed
 npm run prisma:seed   # reset + reseed demo data
 npm run db:reset      # drop and recreate the database
 npm run db:studio     # Prisma Studio
 npm run verify        # end-to-end check against a running server
 ```
+
+### The RADIUS server
+
+**Two processes, one database.** The web app and the RADIUS server run side by
+side and share nothing but the database:
+
+```
+npm run db:pg          # terminal 1 — leave running
+npm run dev            # terminal 2
+npm run radius         # terminal 3
+```
+
+`npm run radius` is not part of `npm run dev`, and that is deliberate. RADIUS is
+UDP — three listeners (1812 auth, 1813 accounting, 3799 CoA) — and it cannot live
+in a Next.js route handler: a route has no way to learn the source port of a
+datagram, cannot bind a second listener, and sits behind a TCP stack a MikroTik
+does not speak. Keeping it separate also means an operator's login spike cannot
+slow down rendering an invoice, and a bug in a request handler cannot take
+authentication offline.
+
+What it does:
+
+- answers **Access-Request** against the customer table — PAP, CHAP and MS-CHAPv2,
+  the last being what a MikroTik PPPoE server negotiates;
+- returns **Mikrotik-Rate-Limit** from the subscriber's package, which is what
+  removes the need to provision a PPP secret per customer;
+- records **accounting** per session, idempotent, because accounting is UDP and
+  resends are normal;
+- sends **Disconnect-Requests** when the office suspends someone who is connected.
+
+Only packets from a `Router.ipAddress` with RADIUS switched on are answered. Set
+the shared secret under **Settings → Network** first — the process refuses to
+start without one, and prints the port it bound:
+
+```
+  RADIUS server
+  ─────────────────────────────────────────────────────────────
+  Listening    0.0.0.0:1812/udp   Access-Request
+               0.0.0.0:1813/udp   Accounting-Request
+               0.0.0.0:3799/udp   CoA / Disconnect
+```
+
+Then follow **[docs/radius-mikrotik.md](docs/radius-mikrotik.md)** to point a
+router at it, and watch the traffic on **Network → RADIUS Live**.
+
+#### In production: a systemd unit
+
+The process needs no code changes to run under a supervisor. It needs the
+database, the shared secret in the environment (or in `.env`), and the vendor
+dictionaries from this repository:
+
+```ini
+# /etc/systemd/system/isp-radius.service
+[Unit]
+Description=ISP Management RADIUS server
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=isp
+WorkingDirectory=/opt/isp-management
+Environment=NODE_ENV=production
+Environment=DATABASE_URL=postgresql://isp@localhost:5432/isp?schema=public
+Environment=AUTH_SECRET=...            # same value the web app uses
+EnvironmentFile=/etc/isp-management/radius.env   # RADIUS_DICTIONARIES, if moved
+ExecStart=/usr/bin/npm run radius
+
+# A RADIUS server that is not answering takes every PPPoE login with it, so it is
+# restarted immediately on any failure rather than backing off.
+Restart=always
+RestartSec=2
+
+# It needs to read the database and nothing else. It writes nothing to disk.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```
+sudo systemctl enable --now isp-radius
+```
+
+`Restart=always` rather than `on-failure` is intentional: a RADIUS process that
+has exited takes authentication for the whole ISP with it, and the 60-second
+heartbeat is what the dashboard reads to say so.
 
 ### Moving an existing SQLite database across
 

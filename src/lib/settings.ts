@@ -91,9 +91,26 @@ export const DEFAULT_SETTINGS: {
   // customer gets, and that should be a decision the ISP makes deliberately
   // after seeing the figures, not one inherited from installing the system.
   { key: "network.fupAction", value: "off", group: "Network" },
-  { key: "network.radiusServer", value: "10.10.0.1", group: "Network" },
+  // RADIUS (Phase W). These three are the *server's* configuration: what this
+  // process binds and what it verifies packets with. The value a router is told to
+  // point at is entered in MikroTik, not here — an ISP with several routers all
+  // point at the same server address, and that address is this host's.
+  { key: "network.radiusServer", value: "0.0.0.0", group: "Network" },
   { key: "network.radiusPort", value: "1812", group: "Network" },
   { key: "network.radiusSecret", value: "", group: "Network", isSecret: true },
+  // Accounting and CoA *listener* ports on this host. IANA-assigned, and not
+  // editable in practice: a NAS configured for anything else will not find this
+  // server, so a value that looks editable but must not be is worse than none.
+  { key: "network.radiusAccountingPort", value: "1813", group: "Network" },
+  { key: "network.radiusCoaPort", value: "3799", group: "Network" },
+  // The port a *router* listens on for Disconnect-Request. Distinct from the
+  // listener above: that is where this server accepts CoA, this is where it
+  // sends it. RFC 5176 puts the NAS side on 3799.
+  { key: "network.nasCoaPort", value: "3799", group: "Network" },
+  /// How long a RADIUS Live log line is kept. An unauthenticated RADIUS port on
+  /// the internet generates packets forever, so the table is pruned rather than
+  /// left to grow; 7 days is long enough to investigate a disputed session.
+  { key: "radius.logRetentionDays", value: "7", group: "Network" },
   { key: "network.mikrotikApiHost", value: "10.10.0.2", group: "Network" },
   { key: "network.mikrotikApiPort", value: "8728", group: "Network" },
   { key: "network.mikrotikUsername", value: "apiuser", group: "Network" },

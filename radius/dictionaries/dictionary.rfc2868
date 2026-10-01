@@ -1,0 +1,22 @@
+# RFC 2868 — RADIUS attributes for tunnel protocol support.
+#
+# `Input-Octets` and `Output-Octets` are the counters every router sends with an
+# Accounting-Request, and they are *not* in RFC 2866's accounting dictionary
+# (which has only the older `Acct-Input-Octets` / `Acct-Output-Octets`). Without
+# this file the codec cannot name those two attributes, so an accounting packet
+# carrying them fails to encode — which on a MikroTik means no accounting at all,
+# because the router will not transmit a packet it cannot build.
+#
+# These are the figures the FUP allowance and any usage report are computed from,
+# so their absence is not cosmetic.
+#
+# **Only the two counters are declared here.** RFC 2868 also defines
+# Tunnel-Client/Server-Endpoint-Id at 40 and 43 — which RFC 2866 has already
+# assigned to `Acct-Status-Type` and `Acct-Output-Octets`. The dictionaries share
+# one flat attribute table, so declaring them silently renames those two, and an
+# `Acct-Status-Type` then decodes as a string. A router's accounting packets stop
+# being recognised with no error anywhere: the server just logs "no status" and
+# drops every packet. This file exists to add two names, and it adds two.
+
+ATTRIBUTE	Input-Octets	34	integer
+ATTRIBUTE	Output-Octets	55	integer
