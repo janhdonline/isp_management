@@ -832,6 +832,28 @@ console.log("\nCustomer wallet (Phase G)");
   check("the customer list renders for the wallet drill-in", list.length > 0);
 }
 
+/* ---------------------------------------------------------------- */
+console.log("\nPer-customer usage (Phase H)");
+{
+  // The usage job must appear in the cron run, and it must be safe to run twice:
+  // the unique (customerId, date) key is the idempotency mechanism, so a second
+  // pass cannot add a row for a day that already has one.
+  const usageRun = spawnSync("npx", ["tsx", "scripts/check-usage.mts"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 120_000,
+  });
+  const out = `${usageRun.stdout ?? ""}${usageRun.stderr ?? ""}`.trim().split("\n").slice(-3).join(" ");
+  check(
+    "the usage job is idempotent and every row equals its source sessions",
+    usageRun.status === 0 && /usage OK:/.test(out),
+    out || `check-usage exited ${usageRun.status}`
+  );
+
+  const cronResults = globalThis.__cronResults ?? {};
+  check("the cron route runs the usage job", cronResults?.usage !== undefined, JSON.stringify(cronResults ?? {}));
+}
+
 console.log(`\n${"─".repeat(46)}`);
 console.log(`  ${pass} passed, ${fail} failed`);
 console.log(`${"─".repeat(46)}\n`);

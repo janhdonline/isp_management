@@ -269,6 +269,7 @@ model Customer {
   invoices     Invoice[]
   payments     Payment[]
   walletTransactions WalletTransaction[]
+  dailyUsage         DailyUsage[]
   tickets      Ticket[]
   sessionLogs  OnlineSession[]
   packageLogs  CustomerPackageChange[]
@@ -1173,6 +1174,34 @@ model WalletTransaction {
   @@index([type])
   @@index([paymentId])
   @@index([invoiceId])
+}
+
+/// One customer-day of measured traffic (ISP.md §31).
+///
+/// An aggregate, not a log: the raw evidence is `OnlineSession` and
+/// `RadiusAccounting`, and this is the daily roll-up a chart or a support answer
+/// needs. `@@unique([customerId, date])` is what makes the aggregation idempotent —
+/// the job upserts on it, so re-running over the same input cannot double-count,
+/// and there is no "does today's row exist" check to lose a race against.
+///
+/// `date` is a `DateTime` pinned to local midnight rather than a `Date`, so a
+/// day's boundaries do not shift with the server's timezone between runs.
+model DailyUsage {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  date       DateTime @default(now())
+  downloadBytes BigInt @default(0)
+  uploadBytes   BigInt @default(0)
+  /// Minutes actually online that day, union of the day's sessions.
+  onlineMinutes Int   @default(0)
+  /// Which source produced this row. RADIUS wins when both exist for a day.
+  source     String   @default("sessions")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([customerId, date])
+  @@index([date])
 }
 
 /// Failed sign-in attempts, so a lockout survives a restart and is shared

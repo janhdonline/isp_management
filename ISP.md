@@ -1356,6 +1356,53 @@ same answer.
 
 ------------------------------------------------------------------------
 
+## 31. Per-Customer Usage
+
+Daily traffic per customer, aggregated from the two places it is actually
+measured. Before this, "amar net slow" was answered by guesswork: the sessions
+were in `OnlineSession` and nobody could sum them.
+
+**`DailyUsage`**, one row per (customer, day), from `OnlineSession` and — since
+Phase W — from `RadiusAccounting`. The unique key is the whole idempotency
+mechanism; there is no "does today's row exist" check anywhere, because that is
+two queries and a window in which a concurrent run inserts a second row and the
+chart shows two bars for Tuesday.
+
+**Which source wins.** A customer on a RADIUS router appears in both, so they are
+never summed — that would double the whole month. **RADIUS wins per
+customer-day; session data is used where RADIUS has nothing.** Three reasons: it
+is the router's own count of what crossed the wire, where a session row is a
+report about a session and can be lost when a nightly sync fails; it is *live*,
+where sessions are only as current as the last sync; and a day mixing both is the
+one number nobody can reason about when a customer disputes it. `source` records
+which, so the chart can say why a bar looks different from its neighbours.
+
+**`onlineMinutes` is the union of the day's sessions, not their sum.** Two devices,
+or a reconnect the router counted twice, must not report more time than passed.
+An unclosed session runs to *now* rather than to the end of the day, because a row
+that was never closed would otherwise contribute 24 hours; a session spanning
+midnight is clipped to each day.
+
+**BigInt throughout.** The counters are summed as BigInt and serialised to strings
+across the server/client boundary — 2^53 bytes is about 9 PB, which a busy shared
+uplink reaches over a 180-day window. The chart converts to `Number` for the axis
+only; every figure shown to a customer is exact.
+
+**The job recomputes a trailing window**, not just yesterday, so a night the sync
+failed or a RADIUS server was down leaves a hole that closes on the next run
+instead of becoming a permanent blank. `usage.retentionDays` (default 180) prunes
+the rest — comfortably longer than any FUP cycle and long enough to dispute a
+quarter-old bill.
+
+**Where it surfaces.** The customer's Usage tab: an area chart of the last 30 days
+with totals, time online and the busiest day. And on a **Slow Internet** ticket,
+a panel of the last seven days against their package speed — because "your
+internet is slow" is unanswerable on its own, while "you moved 340 GB this week
+and were online 41 hours on a 10 Mbps line" separates a congested segment from a
+customer's own equipment, and those go to different people.
+
+------------------------------------------------------------------------
+
 ## Final Requirement
 
 The final UI must feel like **one unified ISP operating system**, not

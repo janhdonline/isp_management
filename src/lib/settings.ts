@@ -108,6 +108,12 @@ export const DEFAULT_SETTINGS: {
   // listener above: that is where this server accepts CoA, this is where it
   // sends it. RFC 5176 puts the NAS side on 3799.
   { key: "network.nasCoaPort", value: "3799", group: "Network" },
+  /// How long per-customer daily usage is kept (Phase H). 180 days is comfortably
+  /// longer than any FUP cycle and long enough for a customer to dispute a bill
+  /// from the previous quarter; past that the rows cost a table scan on every
+  /// profile load and cannot be read anyway.
+  { key: "usage.retentionDays", value: "180", group: "Network" },
+
   /// How long a RADIUS Live log line is kept. An unauthenticated RADIUS port on
   /// the internet generates packets forever, so the table is pruned rather than
   /// left to grow; 7 days is long enough to investigate a disputed session.

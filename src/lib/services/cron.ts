@@ -682,6 +682,18 @@ async function notifyFupExceeded(
 }
 
 /**
+ * Recomputes per-customer daily usage (Phase H).
+ *
+ * Runs over a trailing window rather than just yesterday, so a night the sync
+ * failed or a RADIUS server was down leaves a hole that closes on the next run
+ * instead of becoming a permanent blank on a customer's chart.
+ */
+export async function aggregateDailyUsage(): Promise<JobResult> {
+  const { aggregateUsage } = await import("@/lib/services/usage");
+  return aggregateUsage();
+}
+
+/**
  * Queues and sends the day's payment reminders (Phase F).
  *
  * Separate from `sendScheduledMessages` because the two have different rules:
@@ -721,6 +733,7 @@ export async function runAllJobs() {
     enforcement: retryNetworkActions,
     collection: collectPayments,
     network: syncNetwork,
+    usage: aggregateDailyUsage,
     fup: enforceFup,
     backup: runScheduledBackup,
     radiusLogs: pruneRadiusLogs,

@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { getCustomerFull, getCustomerActivity } from "@/lib/services/customers";
 import { customerReminders } from "@/lib/services/reminder-queries";
 import { walletHistory } from "@/lib/services/wallet";
+import { usageSeries, usageSummary } from "@/lib/services/usage";
+import { UsageGraph } from "@/components/customers/usage-graph";
 import { prisma as db } from "@/lib/prisma";
 import { WalletPanel } from "@/components/customers/wallet-panel";
 import { prisma } from "@/lib/prisma";
@@ -33,16 +35,32 @@ export default async function CustomerProfilePage({
   const sp = await searchParams;
   const tab = typeof sp.tab === "string" ? sp.tab : "overview";
 
-  const [customer, packages, activity, reminders, wallet, accounts, today] = await Promise.all([
+  const [customer, packages, activity, reminders, wallet, accounts, today, usage] = await Promise.all([
     getCustomerFull(id),
     getAllPackages(),
     getCustomerActivity(id, 40),
     customerReminders(id),
     walletHistory(id, { take: 50 }),
     db.account.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, type: true } }),
-    Promise.resolve(
-      new Date().toISOString().slice(0, 10)
-    ),
+    Promise.resolve(new Date().toISOString().slice(0, 10)),
+    (async () => {
+      // 90 days loaded once; the range control re-reads what is here rather than
+      // fetching. Serialised to strings because BigInt cannot cross the
+      // server/client boundary and these totals can exceed 2^53.
+      const series = await usageSeries(id, 90);
+      const totals = await usageSummary(id, 90);
+      return {
+        series: series.map((d) => ({ ...d, downloadBytes: d.downloadBytes.toString(), uploadBytes: d.uploadBytes.toString() })),
+        totals: {
+          ...totals,
+          downloadBytes: totals.downloadBytes.toString(),
+          uploadBytes: totals.uploadBytes.toString(),
+          peak: totals.peak
+            ? { ...totals.peak, downloadBytes: totals.peak.downloadBytes.toString(), uploadBytes: totals.peak.uploadBytes.toString() }
+            : null,
+        },
+      };
+    })(),
   ]);
 
   if (!customer) notFound();
@@ -110,6 +128,14 @@ export default async function CustomerProfilePage({
       </PageHeader>
 
       <PageContainer>
+        {tab === "usage" ? (
+          <UsageGraph
+            series={usage.series}
+            totals={usage.totals}
+            packageSpeed={customer.package?.downloadSpeed ?? null}
+          />
+        ) : null}
+
         {tab === "wallet" ? (
           <WalletPanel
             customerId={id}

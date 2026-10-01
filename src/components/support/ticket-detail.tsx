@@ -13,7 +13,8 @@ import { useToast } from "@/components/providers";
 import { formatDate, formatDateTime } from "@/lib/utils";
 import { TICKET_PRIORITIES, TICKET_STATUSES } from "@/lib/enums";
 import { addTicketCommentAction, assignTicketAction, updateTicketAction } from "@/app/(app)/support/actions";
-import { Paperclip, MessageSquare, Save, Send, UserCheck, Lock, History } from "lucide-react";
+import { Paperclip, MessageSquare, Save, Send, UserCheck, Lock, History, Gauge } from "lucide-react";
+import { UsageVsPackagePanel, type UsageTotals } from "@/components/customers/usage-graph";
 
 type Ticket = {
   id: string;
@@ -35,7 +36,7 @@ type Ticket = {
     phone: string;
     address: string | null;
     area: { name: string } | null;
-    package: { name: string } | null;
+    package: { name: string; downloadSpeed: number | null; uploadSpeed: number | null } | null;
     router: { name: string } | null;
   } | null;
   technician: { id: string; name: string; phone: string; role: string; status: string } | null;
@@ -52,10 +53,18 @@ export function TicketDetailView({
   ticket,
   technicians,
   activity,
+  usage,
 }: {
   ticket: Ticket;
   technicians: Technician[];
   activity: Activity[];
+  /**
+   * Present only for a speed complaint, and only when the customer has usage on
+   * file. `null` means "we have nothing to show", which is itself a finding — a
+   * customer complaining about a slow line with no recorded traffic may be
+   * disconnected rather than slow.
+   */
+  usage: UsageTotals | null;
 }) {
   const router = useRouter();
   const { success, error } = useToast();
@@ -64,6 +73,13 @@ export function TicketDetailView({
   const [tab, setTab] = useState("conversation");
   const [comment, setComment] = useState("");
   const [resolution, setResolution] = useState("");
+
+  // Speed complaints are where usage evidence actually changes the answer, so it
+  // is shown there and nowhere else.
+  const isSpeedComplaint =
+    ticket.category === "Slow Internet" ||
+    /\bslow\b/i.test(ticket.subject) ||
+    /\bslow\b/i.test(ticket.problem);
 
   const run = async (fn: () => Promise<{ success?: string; formError?: string }>, ok: string) => {
     setBusy(true);
@@ -311,8 +327,24 @@ export function TicketDetailView({
       </div>
 
       <div className="space-y-4">
+        {isSpeedComplaint ? (
+          <UsageVsPackagePanel
+            totals={
+              usage ?? {
+                downloadBytes: "0",
+                uploadBytes: "0",
+                onlineMinutes: 0,
+                peak: null,
+                daysWithUsage: 0,
+              }
+            }
+            packageDownload={ticket.customer?.package?.downloadSpeed ?? null}
+            packageUpload={ticket.customer?.package?.uploadSpeed ?? null}
+          />
+        ) : null}
+
         <Card>
-          <CardHeader title="Customer" />
+          <CardHeader title="Customer" icon={<Gauge className="size-4" />} />
           <CardBody>
             {ticket.customer ? (
               <div className="space-y-3">

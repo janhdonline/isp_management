@@ -5,6 +5,7 @@ import { getTicketFull } from "@/lib/services/support";
 import { getCustomerActivity } from "@/lib/services/customers";
 import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import { TicketDetailView } from "@/components/support/ticket-detail";
+import { recentUsage } from "@/lib/services/usage";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,27 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
 
   if (!ticket) notFound();
 
+  // Only for a speed complaint, and only with a customer to look at. Serialised
+  // because BigInt cannot cross the boundary and these totals can exceed 2^53.
+  const isSpeedComplaint =
+    ticket.category === "Slow Internet" ||
+    /\bslow\b/i.test(ticket.subject) ||
+    /\bslow\b/i.test(ticket.problem);
+
+  const usage = isSpeedComplaint && ticket.customer
+    ? await (async () => {
+        const t = await recentUsage(ticket.customer!.id, 7);
+        return {
+          ...t,
+          downloadBytes: t.downloadBytes.toString(),
+          uploadBytes: t.uploadBytes.toString(),
+          peak: t.peak
+            ? { ...t.peak, downloadBytes: t.peak.downloadBytes.toString(), uploadBytes: t.peak.uploadBytes.toString() }
+            : null,
+        };
+      })()
+    : null;
+
   return (
     <>
       <PageHeader
@@ -46,6 +68,7 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
             createdBy: ticket.createdBy ? { name: ticket.createdBy.name } : null,
           }}
           technicians={technicians}
+          usage={usage}
           activity={activity.map((a) => ({
             id: a.id,
             action: a.action,
