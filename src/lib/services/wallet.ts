@@ -157,6 +157,67 @@ export async function topUp(
 }
 
 /* ------------------------------------------------------------------ */
+/* Activation advance                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Books the money a customer paid up front on the day they were created.
+ *
+ * Two records, because they answer different questions: the invoice is the
+ * receipt for money actually taken, and the wallet row is the balance the money
+ * is now sitting in. The old code wrote the balance onto the customer and left
+ * only the invoice, so the wallet had an opening position with no entry explaining
+ * it — and the reconciliation check began failing from the first such customer.
+ *
+ * Extracted from the create action rather than inlined there for one reason: it
+ * is the only part of that action that touches the wallet, and a service function
+ * is something a test can call. The action's own module cannot be imported from a
+ * test at all — it pulls in `server-only` — so an inline version would have been
+ * untested by construction.
+ */
+export async function bookActivationAdvance(
+  tx: Tx,
+  input: {
+    customerId: string;
+    amount: number;
+    packageId?: string | null;
+    /** The `ADV-…` receipt number, used as the ledger's reference. */
+    reference: string;
+    createdById?: string | null;
+  }
+): Promise<{ invoiceId: string; walletTransactionId: string } | null> {
+  if (!(input.amount > 0)) return null;
+
+  const invoice = await tx.invoice.create({
+    data: {
+      invoiceNumber: input.reference,
+      customerId: input.customerId,
+      packageId: input.packageId || null,
+      issueDate: new Date(),
+      dueDate: new Date(),
+      amount: input.amount,
+      total: input.amount,
+      paid: input.amount,
+      status: "Paid",
+      note: "Advance payment at activation",
+      createdById: input.createdById ?? null,
+    },
+    select: { id: true },
+  });
+
+  const { transaction } = await post(tx, {
+    customerId: input.customerId,
+    type: "TopUp",
+    amount: input.amount,
+    note: "Advance payment at activation",
+    createdById: input.createdById ?? null,
+    reference: input.reference,
+  });
+
+  return { invoiceId: invoice.id, walletTransactionId: transaction.id };
+}
+
+/* ------------------------------------------------------------------ */
 /* Adjustment                                                          */
 /* ------------------------------------------------------------------ */
 

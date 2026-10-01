@@ -13,6 +13,7 @@ import { setPortalPassword } from "@/lib/portal-auth";
 import { checkPasswordStrength } from "@/lib/password";
 import { changePackage, deleteCustomer, disconnectCustomer, reconnectCustomer, renewCustomer, suspendCustomer } from "@/lib/services/customers";
 import { syncCustomerBilling } from "@/lib/services/billing";
+import { bookActivationAdvance } from "@/lib/services/wallet";
 import {
   enforceProvision,
   enforceReconnect,
@@ -95,7 +96,12 @@ export async function createCustomerAction(
         expiryDate: d.expiryDate ?? null,
         monthlyBill: d.monthlyBill,
         installationFee: d.installationFee,
-        advancePayment: d.advancePayment,
+        // Zero, and raised through the wallet below. Writing the form's value here
+        // would set a balance with no ledger row behind it, so the wallet's
+        // invariant — SUM(amount) equals advancePayment — would be false from the
+        // first customer created with money in advance, and the reconciliation
+        // check would fail for the rest of the life of the database.
+        advancePayment: 0,
         previousDue: 0,
         discount: d.discount,
         vat: d.vat,
@@ -108,24 +114,16 @@ export async function createCustomerAction(
       },
     });
 
-    // If the customer paid upfront, book it as an advance (receipted later).
-    if (d.advancePayment > 0) {
-      await tx.invoice.create({
-        data: {
-          invoiceNumber: `ADV-${customerCode}`,
-          customerId: created.id,
-          packageId: d.packageId,
-          issueDate: new Date(),
-          dueDate: new Date(),
-          amount: d.advancePayment,
-          total: d.advancePayment,
-          paid: d.advancePayment,
-          status: "Paid",
-          note: "Advance payment at activation",
-          createdById: session.id,
-        },
-      });
-    }
+    // If the customer paid upfront, it becomes a wallet balance through the same
+    // transaction — the receipt and the ledger row, so the money has an entry the
+    // moment it exists.
+    await bookActivationAdvance(tx, {
+      customerId: created.id,
+      amount: d.advancePayment,
+      packageId: d.packageId,
+      reference: `ADV-${customerCode}`,
+      createdById: session.id,
+    });
 
     await prismaLog(
       tx,

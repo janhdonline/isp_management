@@ -23,6 +23,7 @@ import {
   consumeForInvoice,
   walletHistory,
   walletDrift,
+  bookActivationAdvance,
 } from "../src/lib/services/wallet.ts";
 import { createInvoice } from "../src/lib/services/billing.ts";
 import { round2 } from "../src/lib/utils.ts";
@@ -30,6 +31,8 @@ import { nextNumber } from "../src/lib/counter.ts";
 
 const stamp = Date.now();
 const customerIds = [];
+/** Customers made through the real create action, deleted in `after`. */
+const createdIds = [];
 let pkg;
 let area;
 let account;
@@ -118,9 +121,10 @@ beforeEach(async () => {
 });
 
 after(async () => {
-  if (customerIds.length) {
-    await prisma.walletTransaction.deleteMany({ where: { customerId: { in: customerIds } } });
-    await prisma.customer.deleteMany({ where: { id: { in: customerIds } } });
+  for (const ids of [customerIds, createdIds]) {
+    if (!ids.length) continue;
+    await prisma.walletTransaction.deleteMany({ where: { customerId: { in: ids } } });
+    await prisma.customer.deleteMany({ where: { id: { in: ids } } });
   }
   if (account) await prisma.account.deleteMany({ where: { id: account.id } });
   if (area) await prisma.area.deleteMany({ where: { id: area.id } });
@@ -574,6 +578,163 @@ describe("post()", () => {
     );
     const updates = source.match(/advancePayment:\s*next/g) ?? [];
     assert.equal(updates.length, 1, "one place writes the cached balance, and it is `post`");
+  });
+
+  test("customer creation goes through it rather than setting the column", async () => {
+    // The bug this guards: the create form takes an advance payment, and writing it
+    // straight onto `Customer.advancePayment` produced a balance with no ledger row
+    // behind it — so SUM(amount) stopped equalling the balance from the first
+    // customer created with money in advance, and the reconciliation check in
+    // `npm run verify` began failing for good.
+    const source = await import("node:fs").then((fs) =>
+      fs.readFileSync(new URL("../src/app/(app)/customers/actions.ts", import.meta.url), "utf8")
+    );
+
+    assert.ok(
+      /advancePayment:\s*0/.test(source),
+      "the customer must be created with a zero balance"
+    );
+    assert.ok(
+      !/advancePayment:\s*d\.advancePayment/.test(source),
+      "the form's value must never be written straight onto the balance column"
+    );
+    assert.ok(
+      /bookActivationAdvance\(tx,[\s\S]{0,300}amount:\s*d\.advancePayment/.test(source),
+      "and the advance must be raised through the wallet, not written onto the column"
+    );
+  });
+
+  test("an activation advance leaves one TopUp row, and the receipt", async () => {
+    // The acceptance case. The action's own module cannot be imported from a test —
+    // it pulls in `server-only` — so the accounting it performs is exercised through
+    // the service function it delegates to, against a customer created the way the
+    // action creates one: at a zero balance, with the advance raised afterwards.
+    const created = await prisma.customer.create({
+      data: {
+        customerCode: `WALACT-${stamp}-1`,
+        name: "Activation Advance",
+        username: `act${stamp}`,
+        phone: "01755555001",
+        connectionStatus: "Active",
+        packageId: pkg.id,
+        areaId: area.id,
+        connectionDate: new Date(),
+        advancePayment: 0,
+      },
+      select: { id: true },
+    });
+    createdIds.push(created.id);
+
+    const reference = `ADV-${stamp}-1`;
+    const booked = await prisma.$transaction((tx) =>
+      bookActivationAdvance(tx, {
+        customerId: created.id,
+        amount: 1500,
+        packageId: pkg.id,
+        reference,
+      })
+    );
+    assert.ok(booked, "1500 in advance is booked");
+
+    assert.equal(await balanceOf(created.id), 1500, "because a ledger row says so");
+
+    const rows = await prisma.walletTransaction.findMany({ where: { customerId: created.id } });
+    assert.equal(rows.length, 1, "exactly one ledger row, not a bare column write");
+    assert.equal(rows[0].type, "TopUp");
+    assert.equal(rows[0].amount, 1500);
+    assert.equal(rows[0].balanceAfter, 1500);
+    assert.equal(rows[0].note, "Advance payment at activation");
+    assert.equal(rows[0].reference, reference);
+
+    assert.equal(await ledgerSum(created.id), 1500, "the ledger sums to the balance");
+    assert.deepEqual(
+      (await walletDrift()).map((d) => d.customerId),
+      [],
+      "and the reconciliation check finds no drift anywhere"
+    );
+
+    // The receipt is unchanged: a paid ADV invoice for the same amount.
+    const adv = await prisma.invoice.findFirstOrThrow({
+      where: { customerId: created.id, invoiceNumber: reference },
+      select: { total: true, paid: true, status: true },
+    });
+    assert.equal(adv.paid, 1500);
+    assert.equal(adv.status, "Paid");
+  });
+
+  test("an activation with no advance books nothing at all", async () => {
+    const created = await prisma.customer.create({
+      data: {
+        customerCode: `WALACT-${stamp}-2`,
+        name: "No Activation Advance",
+        username: `noact${stamp}`,
+        phone: "01755555002",
+        connectionStatus: "Active",
+        packageId: pkg.id,
+        areaId: area.id,
+        connectionDate: new Date(),
+        advancePayment: 0,
+      },
+      select: { id: true },
+    });
+    createdIds.push(created.id);
+
+    const booked = await prisma.$transaction((tx) =>
+      bookActivationAdvance(tx, {
+        customerId: created.id,
+        amount: 0,
+        packageId: pkg.id,
+        reference: `ADV-${stamp}-2`,
+      })
+    );
+
+    assert.equal(booked, null, "no money in, nothing booked");
+    assert.equal(await balanceOf(created.id), 0);
+    assert.equal(await prisma.walletTransaction.count({ where: { customerId: created.id } }), 0);
+    assert.equal(
+      await prisma.invoice.count({ where: { customerId: created.id, invoiceNumber: { startsWith: "ADV-" } } }),
+      0
+    );
+    assert.deepEqual(await walletDrift(), []);
+  });
+
+  test("an activation advance rolls back with the rest of the transaction", async () => {
+    const created = await prisma.customer.create({
+      data: {
+        customerCode: `WALACT-${stamp}-3`,
+        name: "Rolled Back Advance",
+        username: `rbact${stamp}`,
+        phone: "01755555003",
+        connectionStatus: "Active",
+        packageId: pkg.id,
+        areaId: area.id,
+        connectionDate: new Date(),
+        advancePayment: 0,
+      },
+      select: { id: true },
+    });
+    createdIds.push(created.id);
+
+    await assert.rejects(
+      prisma.$transaction(async (tx) => {
+        await bookActivationAdvance(tx, {
+          customerId: created.id,
+          amount: 1500,
+          packageId: pkg.id,
+          reference: `ADV-${stamp}-3`,
+        });
+        throw new Error("activation failed after the advance was booked");
+      }),
+      /activation failed/
+    );
+
+    assert.equal(await balanceOf(created.id), 0, "the balance rolled back");
+    assert.equal(await prisma.walletTransaction.count({ where: { customerId: created.id } }), 0);
+    assert.equal(
+      await prisma.invoice.count({ where: { customerId: created.id, invoiceNumber: { startsWith: "ADV-" } } }),
+      0,
+      "and so did the receipt"
+    );
   });
 
   test("it clamps to the floor when asked", async () => {
