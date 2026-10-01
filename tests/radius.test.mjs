@@ -17,6 +17,7 @@
 import { test, describe, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import dgram from "node:dgram";
 import {
   startMockNas,
@@ -25,6 +26,7 @@ import {
   accountingRequest,
   exchange,
   send,
+  msChapV2ResponseValue,
 } from "./mock-nas.mjs";
 import { prisma } from "../src/lib/prisma.ts";
 import { saveSettings, getSettings } from "../src/lib/settings.ts";
@@ -37,9 +39,15 @@ import {
   verifyChap,
   verifyMsChapV2,
   extractCredentials,
+  acceptAttributes,
+  msChapV2ChallengeHash,
+  msChapV2NtResponse,
+  msChapV2Success,
+  stripDomain,
   rateLimitFor,
   sessionTimeout,
   REPLY_SUSPENDED,
+  REPLY_SESSION_LIMIT,
 } from "../radius/auth.ts";
 import { applyAccounting, readAccountingFields, reapStaleSessions } from "../radius/accounting.ts";
 import { admitNas, resetRateLimits, allowedNasIps, decodePacket, radiusConfig } from "../radius/packet.ts";
@@ -240,35 +248,258 @@ describe("credential verification", () => {
     assert.equal(verifyChap("pw", attr.subarray(0, 17)), false, "no challenge in the attribute");
   });
 
-  test("MS-CHAPv2 needs both the password and this server's challenge", () => {
-    const build = (password) => {
-      const challenge = randomBytes(16);
-      const peer = randomBytes(16);
-      const nt = md4Utf16Le(password);
-      const proof = createHash("sha256").update(Buffer.concat([peer, nt])).digest().subarray(0, 16);
-      const key = Buffer.from([nt[0], nt[1], nt[2], nt[3], nt[4], nt[5], nt[6], 0]);
-      const a = desEncrypt(Buffer.concat([nt, peer, Buffer.alloc(4)]), key).subarray(0, 8);
-      const b = desEncrypt(Buffer.concat([challenge, peer, Buffer.alloc(4)]), key).subarray(0, 8);
-      const chalHash = Buffer.alloc(8);
-      for (let i = 0; i < 8; i++) chalHash[i] = a[i] ^ b[i];
-      return {
-        challenge,
-        value: Buffer.concat([peer, Buffer.from([0]), proof, chalHash, Buffer.from([0])]),
-      };
-    };
+  // ----------------------------------------------------------------
+  // The published RFC 2759 §9.2 trace.
+  //
+  // These values are transcribed from the RFC and appear nowhere in this
+  // repository's source, so they are evidence about interoperability rather than
+  // about self-consistency. Every other MS-CHAPv2 test here builds its inputs
+  // from this file's own primitives; if those primitives were wrong in the same
+  // way as the server's, they would all still pass. This one cannot.
+  //
+  // RFC 2759 §9.2, "Hash Example": user "User", password "clientPass".
+  const RFC2759 = {
+    userName: "User",
+    password: "clientPass",
+    authenticatorChallenge: Buffer.from("5b5d7c7d7b3f2f3e3c2c602132262628", "hex"),
+    peerChallenge: Buffer.from("21402324255e262a28295f2b3a337c7e", "hex"),
+    // §9.2 "8-octet Challenge" — the output of ChallengeHash.
+    challengeHash: "d02e4386bce91226",
+    // §9.2 "16-octet PasswordHash" — MD4 of the UTF-16LE password.
+    passwordHash: "44ebba8d5312b8d611474411f56989ae",
+    // §9.2 "24 octet NT-Response".
+    ntResponse:
+      "82309ecd8d708b5ea08faa3981cd83544233114a3d85d6df",
+    // §9.2 "16-octet PasswordHashHash" — MD4 of the PasswordHash.
+    passwordHashHash: "41c00c584bd2d91c4017a2a12fa59f3f",
+    // §9.2 "42-octet AuthenticatorResponse".
+    authenticatorResponse: "S=407A5589115FD0D6209F510FE9C04566932CDA56",
+  };
 
-    const good = build("pppsecret");
-    assert.equal(verifyMsChapV2("pppsecret", good.value, good.challenge), true);
-    assert.equal(verifyMsChapV2("wrong", good.value, good.challenge), false);
+  test("RFC 2759 §9.2: the challenge hash is SHA-1(Peer ‖ Authenticator ‖ UserName)[0:8]", () => {
     assert.equal(
-      verifyMsChapV2("pppsecret", good.value, randomBytes(16)),
+      msChapV2ChallengeHash(
+        RFC2759.peerChallenge,
+        RFC2759.authenticatorChallenge,
+        RFC2759.userName
+      ).toString("hex"),
+      RFC2759.challengeHash
+    );
+  });
+
+  test("RFC 2759 §9.2: the NT hash is MD4 of the UTF-16LE password", () => {
+    assert.equal(md4Utf16Le(RFC2759.password).toString("hex"), RFC2759.passwordHash);
+    assert.equal(md4(md4Utf16Le(RFC2759.password)).toString("hex"), RFC2759.passwordHashHash);
+  });
+
+  test("the RFC trace is not reachable from this repository's own code", () => {
+    // A guard on the guard. The value below is the whole point of this block: it
+    // is the only input here that this codebase did not produce. If someone ever
+    // "fixes" a failing vector by regenerating it, the test stops testing
+    // interoperability — so its provenance is asserted, not assumed.
+    const source = readFileSync(new URL("../radius/auth.ts", import.meta.url), "utf8");
+    assert.ok(
+      !source.includes(RFC2759.ntResponse),
+      "the published NT-Response must not appear in the implementation being tested"
+    );
+    assert.ok(
+      !source.includes(RFC2759.challengeHash),
+      "nor the challenge hash"
+    );
+    assert.ok(
+      !source.includes(RFC2759.authenticatorResponse),
+      "nor the AuthenticatorResponse"
+    );
+  });
+
+  test("RFC 2759 §9.2: the NT-Response matches the published value", () => {
+    // The load-bearing assertion. Three DES blocks over three 56-bit keys taken at
+    // bit offsets 0, 56 and 112 of the 128-bit password hash, zero-padded — the
+    // byte-aligned reading gives a different key and therefore a different
+    // response, which is why this is checked against the RFC and not against
+    // another function in this file.
+    const nt = msChapV2NtResponse(
+      RFC2759.password,
+      RFC2759.peerChallenge,
+      RFC2759.authenticatorChallenge,
+      RFC2759.userName
+    );
+    assert.equal(nt.toString("hex"), RFC2759.ntResponse);
+    assert.equal(nt.length, 24, "RFC 2759 §8.1: three 8-octet DES outputs");
+  });
+
+  test("RFC 2759 §9.2: the AuthenticatorResponse matches the published value", () => {
+    assert.equal(
+      msChapV2Success(
+        RFC2759.password,
+        Buffer.from(RFC2759.ntResponse, "hex"),
+        RFC2759.peerChallenge,
+        RFC2759.authenticatorChallenge,
+        RFC2759.userName
+      ),
+      RFC2759.authenticatorResponse
+    );
+  });
+
+  test("RFC 2759 §9.2: the published trace verifies as a real Access-Request", () => {
+    // End to end against the RFC's own numbers: build the response a peer would
+    // send, and check the server accepts it — rather than checking the response
+    // the same code just produced.
+    const value = Buffer.concat([
+      Buffer.from([1, 0]), // Ident, Flags
+      RFC2759.peerChallenge,
+      Buffer.alloc(8), // Reserved, must be zero
+      Buffer.from(RFC2759.ntResponse, "hex"),
+    ]);
+    assert.equal(value.length, 50, "RFC 2759 §4: Ident ‖ Flags ‖ Peer ‖ Reserved ‖ NTResponse");
+
+    assert.equal(
+      verifyMsChapV2(
+        RFC2759.password,
+        value,
+        RFC2759.authenticatorChallenge,
+        RFC2759.userName
+      ),
+      true
+    );
+  });
+
+  test("the MS-CHAP2-Response layout is the RFC's, not the 42-byte one", () => {
+    const value = msChapV2ResponseValue(
+      RFC2759.password,
+      RFC2759.authenticatorChallenge,
+      RFC2759.peerChallenge,
+      RFC2759.userName
+    );
+    assert.equal(value.length, 50);
+    assert.equal(
+      value.subarray(0, 18).toString("hex"),
+      `0100${RFC2759.peerChallenge.toString("hex")}`,
+      "Ident, Flags, then the 16-byte peer challenge"
+    );
+    assert.equal(value.subarray(18, 26).toString("hex"), "0000000000000000", "Reserved must be zero");
+    assert.equal(value.subarray(26).toString("hex"), RFC2759.ntResponse);
+
+    // The layout this used to accept must now be refused, not merely tolerated:
+    // it is not MS-CHAPv2, and accepting it is how a server ends up agreeing with
+    // another server that is also wrong.
+    const legacy = value.subarray(0, 42);
+    assert.equal(
+      verifyMsChapV2(RFC2759.password, legacy, RFC2759.authenticatorChallenge, RFC2759.userName),
+      false,
+      "the old 42-byte layout must not verify"
+    );
+    assert.equal(
+      verifyMsChapV2(RFC2759.password, Buffer.alloc(43), RFC2759.authenticatorChallenge, "User"),
+      false,
+      "and neither must 43 bytes"
+    );
+  });
+
+  test("a non-zero Reserved field is refused", () => {
+    // RFC 2759 §4: "Reserved, must be zero." A peer that sets it is speaking
+    // something else, and guessing at the layout is how a server accepts a
+    // response it should not have.
+    const value = Buffer.concat([
+      Buffer.from([1, 0]),
+      RFC2759.peerChallenge,
+      Buffer.from([1, 0, 0, 0, 0, 0, 0, 0]),
+      Buffer.from(RFC2759.ntResponse, "hex"),
+    ]);
+    assert.equal(
+      verifyMsChapV2(RFC2759.password, value, RFC2759.authenticatorChallenge, RFC2759.userName),
+      false
+    );
+  });
+
+  test("both the password and this server's challenge must be right", () => {
+    const auth = randomBytes(16);
+    const peer = randomBytes(16);
+    const value = msChapV2ResponseValue("pppsecret", auth, peer, "someone");
+
+    assert.equal(verifyMsChapV2("pppsecret", value, auth, "someone"), true);
+    assert.equal(verifyMsChapV2("wrong", value, auth, "someone"), false);
+    assert.equal(
+      verifyMsChapV2("pppsecret", value, randomBytes(16), "someone"),
       false,
       "a response to a different challenge must not verify — that is the replay defence"
     );
+    assert.equal(
+      verifyMsChapV2("pppsecret", value, auth, "someoneelse"),
+      false,
+      "the user name is mixed into the challenge hash, so it must match"
+    );
+  });
 
-    const tampered = Buffer.from(good.value);
-    tampered[20] ^= 0xff;
-    assert.equal(verifyMsChapV2("pppsecret", tampered, good.challenge), false);
+  test("the challenge comes from the request's MS-CHAP-Challenge attribute", () => {
+    // RFC 2548 type 11. There is no MS-CHAP2-Challenge attribute, and a server
+    // that invents one rejects every real MikroTik.
+    const challenge = randomBytes(16);
+    const value = msChapV2ResponseValue("pppsecret", challenge, randomBytes(16), "someone");
+    const packet = {
+      code: "Access-Request",
+      identifier: 1,
+      attributes: {
+        "User-Name": "someone",
+        "Vendor-Specific": {
+          "MS-CHAP2-Response": value,
+          "MS-CHAP-Challenge": challenge,
+        },
+      },
+    };
+    const creds = extractCredentials(packet);
+    assert.equal(creds.method, "MS-CHAPv2");
+    assert.equal(creds.value.length, 50);
+    assert.deepEqual(creds.challenge, challenge);
+  });
+
+  test("a v2 response with no challenge yields no credential", () => {
+    const value = msChapV2ResponseValue(
+      "pppsecret",
+      randomBytes(16),
+      randomBytes(16),
+      "someone"
+    );
+    const creds = extractCredentials({
+      code: "Access-Request",
+      identifier: 1,
+      attributes: { "User-Name": "someone", "Vendor-Specific": { "MS-CHAP2-Response": value } },
+    });
+    assert.equal(creds.challenge, null, "there is nothing to verify against, and none is invented");
+  });
+
+  test("the NT domain prefix is stripped before hashing the user name", () => {
+    // RFC 2759 §8.2 uses the user name without any Windows NT domain prefix. A
+    // MikroTik configured with "DOMAIN\\user" hashes the bare name, so a server
+    // that does not strip rejects a login the router will happily complete.
+    assert.equal(stripDomain("DOMAIN\\user"), "user");
+    assert.equal(stripDomain("user"), "user");
+    assert.equal(stripDomain(""), "");
+    assert.equal(
+      msChapV2ChallengeHash(
+        RFC2759.peerChallenge,
+        RFC2759.authenticatorChallenge,
+        "BIGCO\\User"
+      ).toString("hex"),
+      RFC2759.challengeHash,
+      "a domain-qualified name must hash the same as the bare one"
+    );
+  });
+
+  test("the Access-Accept carries MS-CHAP2-Success for a v2 login", () => {
+    // Mutual authentication, RFC 2759 §8.7. A MikroTik negotiating it checks for
+    // the AuthenticatorResponse, so an Accept without it leaves the subscriber
+    // retrying forever.
+    const attrs = acceptAttributes({
+      allowed: true,
+      msChapSuccess: RFC2759.authenticatorResponse,
+    });
+    const vs = attrs.find((a) => a[0] === "Vendor-Specific");
+    assert.ok(vs, "the reply must carry a vendor-specific attribute");
+    assert.equal(vs[1], "Microsoft");
+    const inner = vs[2].find((i) => i[0] === "MS-CHAP2-Success");
+    assert.ok(inner, "and it must be MS-CHAP2-Success, not the response attribute");
+    assert.equal(Buffer.from(inner[1]).toString("ascii"), RFC2759.authenticatorResponse);
   });
 
   test("a request with no usable password attribute yields no credential", () => {
@@ -675,26 +906,43 @@ describe("the server, over UDP", () => {
     assert.deepEqual(fake.attributes, real.attributes);
   });
 
-  test("MS-CHAPv2 works over the wire", async () => {
+  test("MS-CHAPv2 works over the wire, and the reply authenticates back", async () => {
     const customer = await makeCustomer({ code: "chap" });
-    const challenge = randomBytes(16);
+    const auth = randomBytes(16);
     const peer = randomBytes(16);
-    const nt = md4Utf16Le(PASSWORD);
-    const proof = createHash("sha256").update(Buffer.concat([peer, nt])).digest().subarray(0, 16);
-    const key = Buffer.from([nt[0], nt[1], nt[2], nt[3], nt[4], nt[5], nt[6], 0]);
-    const a = desEncrypt(Buffer.concat([nt, peer, Buffer.alloc(4)]), key).subarray(0, 8);
-    const b = desEncrypt(Buffer.concat([challenge, peer, Buffer.alloc(4)]), key).subarray(0, 8);
-    const chalHash = Buffer.alloc(8);
-    for (let i = 0; i < 8; i++) chalHash[i] = a[i] ^ b[i];
-    const value = Buffer.concat([peer, Buffer.from([0]), proof, chalHash, Buffer.from([0])]);
 
     const reply = await exchange(
       AUTH_PORT,
-      accessRequestMsChapV2(SECRET, customer.username, PASSWORD, challenge)
+      accessRequestMsChapV2(SECRET, customer.username, PASSWORD, auth, peer)
     );
+    assert.ok(reply, "the server must answer — silence costs a 30s PPPoE timeout");
     assert.equal(reply.code, "Access-Accept", "a valid MS-CHAPv2 login must be accepted");
     assert.equal(reply.attributes["Vendor-Specific"]["Mikrotik-Rate-Limit"], "20M/10M");
-    void value;
+
+    // Mutual authentication, RFC 2759 §8.7. Attribute 25 decodes under its request
+    // name (the dictionary aliases the two), so the value is what matters.
+    const vs = reply.attributes["Vendor-Specific"];
+    const success = String(vs["MS-CHAP2-Success"] ?? vs["MS-CHAP2-Response"] ?? "");
+    assert.match(
+      success,
+      /^S=[0-9A-F]{40}$/,
+      "an MS-CHAPv2 Accept must carry MS-CHAP2-Success, or the router will not finish authenticating"
+    );
+    assert.equal(
+      success,
+      msChapV2Success(PASSWORD, msChapV2NtResponse(PASSWORD, peer, auth, customer.username), peer, auth, customer.username),
+      "and it must be the AuthenticatorResponse for *this* exchange"
+    );
+  });
+
+  test("an MS-CHAPv2 login with the wrong password is rejected", async () => {
+    const customer = await makeCustomer({ code: "chapbad" });
+    const reply = await exchange(
+      AUTH_PORT,
+      accessRequestMsChapV2(SECRET, customer.username, "not-the-password", randomBytes(16))
+    );
+    assert.equal(reply.code, "Access-Reject");
+    assert.equal(reply.attributes["Reply-Message"], REPLY_SUSPENDED);
   });
 
   test("a packet from a non-allowlisted NAS is dropped, not answered", async () => {
@@ -841,6 +1089,37 @@ describe("the server, over UDP", () => {
     }
   });
 
+  test("the concurrent-session limit is enforced over the wire", async () => {
+    // End to end, over a real socket, and the message is part of what is being
+    // checked: it is what the subscriber reads, and it must not be the billing
+    // one. "Account suspended — please clear your dues" would send them to the
+    // accounts office for a problem that is another router in their own house.
+    resetRateLimits();
+    await saveSettings([{ key: "radius.simultaneousUse", value: "1" }]);
+    const customer = await makeCustomer({ code: "simwire" });
+
+    const first = await exchange(
+      AUTH_PORT,
+      accessRequestPap(SECRET, customer.username, PASSWORD)
+    );
+    assert.equal(first.code, "Access-Accept");
+
+    const second = await exchange(
+      AUTH_PORT,
+      accessRequestPap(SECRET, customer.username, PASSWORD)
+    );
+    assert.equal(second.code, "Access-Reject");
+    assert.equal(second.attributes["Reply-Message"], REPLY_SESSION_LIMIT);
+
+    const line = await prisma.radiusLog.findFirst({
+      where: { type: "reject", username: customer.username },
+      orderBy: { id: "desc" },
+      select: { message: true, outcome: true },
+    });
+    assert.match(line.message, /session limit/i, "the reason must be visible in RADIUS Live");
+    assert.match(line.outcome, /session limit/i);
+  });
+
   test("the shared secret is never written to a log line", async () => {
     await exchange(AUTH_PORT, accessRequestPap(SECRET, "ghost", "x"));
     await new Promise((r) => setTimeout(r, 200));
@@ -870,6 +1149,196 @@ describe("the server, over UDP", () => {
     assert.ok(row, "the process must write a heartbeat");
     assert.ok(row.packetsIn > 0, `packetsIn was ${row.packetsIn}`);
     assert.ok(Date.now() - row.updatedAt.getTime() < HEARTBEAT_STALE_MS);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Simultaneous-Use                                                    */
+/* ------------------------------------------------------------------ */
+
+describe("concurrent sessions per subscriber", () => {
+  /** Opens a live session for `username` with a real (non-claim) id. */
+  async function openSession(username, id) {
+    await prisma.radiusAccounting.create({
+      data: {
+        username,
+        acctSessionId: id ?? `sim-${Math.random().toString(36).slice(2)}`,
+        nasIp: "127.0.0.1",
+        status: "Interim-Update",
+        seq: 30,
+        inputOctets: 100n,
+        outputOctets: 50n,
+      },
+    });
+  }
+
+  /** A PAP credential for any username; the username is the decision's argument. */
+  const pap = () => ({ method: "PAP", value: Buffer.from(PASSWORD), challenge: null });
+
+  beforeEach(async () => {
+    // These cases issue a lot of logins in quick succession, which is what trips
+    // the per-NAS rate limit — and a request refused for that reason asserts
+    // nothing about simultaneous use. The counter is per-process state, so it has
+    // to be cleared between cases.
+    resetRateLimits();
+    await saveSettings([{ key: "radius.simultaneousUse", value: "1" }]);
+    // Clean up any claim rows a previous test left, or a stale claim would make
+    // the next case fail for the wrong reason.
+    await prisma.radiusAccounting.deleteMany({ where: { username: { contains: "rad" } } });
+  });
+
+  test("limit=1 refuses a second login while the first is live", async () => {
+    const { decide } = await import("../radius/auth.ts");
+    const customer = await makeCustomer({ code: "sim" });
+    const sid = `sim1-${stamp}`;
+
+    // Nothing open yet, so the first login is accepted and claims the slot.
+    const first = await decide(customer.username, pap(), "127.0.0.1");
+    assert.equal(first.allowed, true);
+
+    // The claim stands in for the session until accounting replaces it.
+    const claims = await prisma.radiusAccounting.findMany({
+      where: { username: customer.username, stoppedAt: null },
+    });
+    assert.equal(claims.length, 1, "an accepted login reserves its slot");
+
+    // Now the router sends the real Start, which retires the claim.
+    await applyAccounting(
+      {
+        username: customer.username,
+        acctSessionId: sid,
+        nasIp: "127.0.0.1",
+        nasIdentifier: null,
+        sessionTime: 0,
+        inputOctets: 0n,
+        outputOctets: 0n,
+        framedIpAddress: null,
+        callingStationId: null,
+      },
+      "Start"
+    );
+    assert.equal(
+      await prisma.radiusAccounting.count({
+        where: { username: customer.username, stoppedAt: null },
+      }),
+      1,
+      "the claim is replaced by the session, not added to it"
+    );
+
+    // A second device, while the first is still connected.
+    const second = await decide(customer.username, pap(), "127.0.0.1");
+    assert.equal(second.allowed, false);
+    assert.match(second.reason, /session limit/i);
+  });
+
+  test("limit=0 allows concurrent logins", async () => {
+    await saveSettings([{ key: "radius.simultaneousUse", value: "0" }]);
+    const { decide } = await import("../radius/auth.ts");
+    const customer = await makeCustomer({ code: "simunlim" });
+
+    await openSession(customer.username);
+    await openSession(customer.username);
+    await openSession(customer.username);
+
+    const d = await decide(customer.username, pap(), "127.0.0.1");
+    assert.equal(d.allowed, true, "unlimited means three live sessions and still an Accept");
+    // No claim row is written when the control is off: there is no limit to
+    // reserve a slot against, and a row nobody checks is a row that only makes
+    // the online list lie.
+    assert.equal(
+      await prisma.radiusAccounting.count({ where: { username: customer.username, stoppedAt: null } }),
+      3,
+      "the control is off, so the login adds no bookkeeping of its own"
+    );
+  });
+
+  test("a limit above 1 allows that many", async () => {
+    await saveSettings([{ key: "radius.simultaneousUse", value: "2" }]);
+    const { decide } = await import("../radius/auth.ts");
+    const customer = await makeCustomer({ code: "simtwo" });
+
+    await openSession(customer.username);
+    const second = await decide(customer.username, pap(), "127.0.0.1");
+    assert.equal(second.allowed, true, "the second session is within the limit");
+
+    await openSession(customer.username);
+    await openSession(customer.username);
+    const third = await decide(customer.username, pap(), "127.0.0.1");
+    assert.equal(third.allowed, false, "the third is not");
+  });
+
+  test("two simultaneous logins yield exactly one Accept", async () => {
+    // The race the control exists for. Both requests are fired together, so
+    // without the advisory lock in claimSession both would read a count of 0 and
+    // both would be accepted.
+    await saveSettings([{ key: "radius.simultaneousUse", value: "1" }]);
+    const { decide } = await import("../radius/auth.ts");
+    const customer = await makeCustomer({ code: "simrace" });
+
+    const results = await Promise.all([
+      decide(customer.username, pap(), "127.0.0.1"),
+      decide(customer.username, pap(), "127.0.0.1"),
+      decide(customer.username, pap(), "127.0.0.1"),
+      decide(customer.username, pap(), "127.0.0.1"),
+    ]);
+
+    const accepted = results.filter((r) => r.allowed).length;
+    assert.equal(accepted, 1, `exactly one of four concurrent logins may be accepted, got ${accepted}`);
+    assert.equal(
+      await prisma.radiusAccounting.count({ where: { username: customer.username, stoppedAt: null } }),
+      1,
+      "and exactly one session slot is held"
+    );
+  });
+
+  test("a closed session frees the slot", async () => {
+    const { decide } = await import("../radius/auth.ts");
+    const customer = await makeCustomer({ code: "simfree" });
+    const sid = `simfree-${stamp}`;
+
+    assert.equal((await decide(customer.username, pap(), "127.0.0.1")).allowed, true);
+    assert.equal((await decide(customer.username, pap(), "127.0.0.1")).allowed, false);
+
+    await prisma.radiusAccounting.updateMany({
+      where: { username: customer.username },
+      data: { stoppedAt: new Date() },
+    });
+    void sid;
+
+    assert.equal(
+      (await decide(customer.username, pap(), "127.0.0.1")).allowed,
+      true,
+      "a subscriber who has logged out can log back in"
+    );
+  });
+
+  test("a nonsense limit falls back to 1 rather than to unlimited", async () => {
+    // `Number("abc")` is NaN and `NaN >= 0` is false, so an unchecked reading
+    // would take the "unlimited" branch and silently disable the control.
+    await saveSettings([{ key: "radius.simultaneousUse", value: "not-a-number" }]);
+    const { decide } = await import("../radius/auth.ts");
+    const customer = await makeCustomer({ code: "simbad" });
+
+    await openSession(customer.username);
+    const d = await decide(customer.username, pap(), "127.0.0.1");
+    assert.equal(d.allowed, false, "a broken setting must not mean 'no limit'");
+  });
+
+  test("the limit only counts that subscriber's sessions", async () => {
+    const { decide } = await import("../radius/auth.ts");
+    const a = await makeCustomer({ code: "sima" });
+    const b = await makeCustomer({ code: "simb" });
+
+    await openSession(a.username);
+    assert.equal(
+      (await decide(b.username, pap(b.username), "127.0.0.1")).allowed,
+      true,
+      "one subscriber's session must not refuse another's login"
+    );
+  });
+
+  after(async () => {
+    await prisma.radiusAccounting.deleteMany({ where: { username: { contains: "rad" } } });
   });
 });
 

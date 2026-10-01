@@ -157,6 +157,28 @@ The secret is right. The `User-Name` on the router must match the customer's
 *ppp secret*, not this application's username; if the profile still has
 `local=username` set, remove it.
 
+**Every v2 login rejected, with the right password**
+
+Almost always the user name. MS-CHAPv2 mixes the user name into its challenge
+hash (RFC 2759 §8.2), so a MikroTik configured with `DOMAIN\user` computes a
+different hash than one configured with `user`. This application strips any domain
+prefix, so the router and the server agree only if the router's local
+authentication is also set to the bare name.
+
+If the log reason is "no supported password attribute", the router offered no
+CHAP or MS-CHAPv2 credential at all — check **PPP → Profiles → Use RADIUS** is
+ticked on the profile, not only **PPP → AAA**.
+
+**A subscriber is refused because another device is connected**
+
+`radius.simultaneousUse`, default 1. Their account is fine and nothing is wrong
+with their line — another session of theirs is already open. Either the second
+device is theirs to unplug, or the plan allows more: raise the limit in
+**Settings → Network**, or set it to `0` for unlimited on a flat-rate product.
+The refusal is deliberately worded differently from the "account suspended" one,
+because sending someone to the billing office for a problem in their own house is
+the worse mistake.
+
 **Rejected, reason "no such subscriber"**
 
 Same cause, seen from the other end: no customer has that username. It is the

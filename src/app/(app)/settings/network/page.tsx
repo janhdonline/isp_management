@@ -26,6 +26,21 @@ const FIELDS: SettingField[] = [
   { key: "network.radiusServer", label: "RADIUS Server" },
   { key: "network.radiusPort", label: "RADIUS Port", type: "number" },
   { key: "network.radiusSecret", label: "RADIUS Shared Secret", type: "password" },
+  {
+    key: "radius.simultaneousUse",
+    label: "Concurrent sessions per subscriber",
+    type: "number",
+    // The wording is the decision: 1 refuses a second device, and on a PPPoE
+    // account that is nearly always credential sharing — one account, two
+    // households — where the FUP allowance is being spent by two people and
+    // billed to one. 0 turns the control off entirely, which is a legitimate
+    // choice for flat-rate products.
+    hint:
+      "How many RADIUS sessions one username may have open at once. 1 refuses a second " +
+      "device while the first is still connected. 0 means unlimited — use that for flat-rate " +
+      "products where sharing is not a concern, or a legitimate second device will be refused.",
+  },
+  { key: "radius.logRetentionDays", label: "RADIUS log retention (days)", type: "number" },
   { key: "network.oltVendor", label: "OLT Vendor", type: "select", options: ["Huawei", "ZTE", "Nokia", "Fiberhome", "Other"] },
   { key: "network.oltHost", label: "OLT Host" },
   { key: "network.oltPort", label: "OLT API Port", type: "number" },

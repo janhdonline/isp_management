@@ -35,6 +35,9 @@ import type { RadiusAttr } from "@/lib/services/radius-codec";
 /** MikroTik's vendor id, from radius/dictionaries/dictionary.mikrotik. */
 export const MIKROTIK_VENDOR = "MikroTik";
 
+/** Microsoft's vendor id (PEN 311), from radius/dictionaries/dictionary.mschap2. */
+export const MICROSOFT_VENDOR = "Microsoft";
+
 /**
  * The one message a customer is ever shown.
  *
@@ -57,7 +60,15 @@ export const REPLY_SUSPENDED = "Account suspended — please clear your dues";
 export type Credentials = {
   method: "PAP" | "CHAP" | "MS-CHAPv2" | "none";
   value: Buffer | null;
-  /** The server's own 16-byte MS-CHAP2 challenge, when one was sent. */
+  /**
+   * The authenticator's 16-byte challenge, read from the request's
+   * MS-CHAP-Challenge attribute (RFC 2548 type 11).
+   *
+   * There is no MS-CHAP2-Challenge attribute — a server that "sends" one under
+   * that name is not interoperable, and this one reads what actually arrived
+   * rather than inventing a value, because the challenge hash is only meaningful
+   * if the client was told it.
+   */
   challenge: Buffer | null;
 };
 
@@ -75,10 +86,9 @@ export function extractCredentials(packet: RadiusPacket): Credentials {
   // attribute is present in some MS-CHAPv2 requests too. Checking v2 first means
   // a request offering both is answered with the method the client actually
   // prefers rather than the weaker one.
-  const chap2Challenge = ms("MS-CHAP2-Challenge");
   const chap2Response = ms("MS-CHAP2-Response");
   if (chap2Response) {
-    return { method: "MS-CHAPv2", value: chap2Response, challenge: chap2Challenge };
+    return { method: "MS-CHAPv2", value: chap2Response, challenge: ms("MS-CHAP-Challenge") };
   }
 
   const chapPassword = attrs["CHAP-Password"];
@@ -150,114 +160,201 @@ export function verifyChap(stored: string, chapPassword: Buffer): boolean {
   return timingSafeEqual(expected, response);
 }
 
+/* ------------------------------------------------------------------ */
+/* MS-CHAPv2 (RFC 2759)                                                */
+/* ------------------------------------------------------------------ */
+
 /**
- * MS-CHAPv2 (RFC 2759), the method a MikroTik PPPoE server negotiates.
+ * The MS-CHAP2-Response value, excluding the RADIUS length header:
+ * 1 + 1 + 16 + 8 + 24 = 50 octets. As a RADIUS attribute it is 51.
+ */
+const MS_CHAP2_RESPONSE_LEN = 50;
+
+/**
+ * Verifies an MS-CHAPv2 (RFC 2759) response.
  *
- * The response carries two independent proofs, and both are required:
+ * RFC 2759 §4 fixes the value's layout:
  *
- *   1. **The NT hash** — `SHA-256(peerChallenge ‖ password)` truncated to 16 bytes.
- *      This is the client proving it holds the password, with the password itself
- *      never on the wire.
- *   2. **The challenge hash** — `DES(NtHash ‖ peerChallenge) XOR DES(challenge ‖
- *      peerChallenge)`, first 8 bytes. This is the client proving it answered *our*
- *      challenge, so a response captured from one session cannot be replayed at
- *      another.
+ *     1 octet   Ident
+ *     1 octet   Flags
+ *    16 octets  PeerChallenge
+ *     8 octets  Reserved, must be zero
+ *    24 octets  NTResponse
  *
- * Checking only the first accepts a client that answered a different server's
- * challenge; checking only the second accepts anyone who has captured a response
- * once. The pairing is the whole point of the protocol.
+ * 50 octets in total, and as a RADIUS attribute a leading length byte makes it
+ * 51. Both lengths are accepted because which one arrives depends on whether the
+ * length header has been stripped; neither is *assumed*, and a length that is
+ * neither is rejected rather than parsed at an offset that happens to look
+ * plausible. The 42-byte layout this used to accept was not MS-CHAPv2 at all.
  *
- * `challenge` is the 16-byte value this server sent in MS-CHAP2-Challenge. It is a
- * parameter rather than something read from the response because the response
- * cannot contain it — the entire security of the second proof is that the client
- * had to be told it out of band.
+ * The check itself, §8.1:
+ *
+ *     ChallengeHash = SHA-1(PeerChallenge ‖ AuthenticatorChallenge ‖ UserName)[0..8]
+ *     NTResponse    = DES(K1, ChallengeHash) ‖ DES(K2, ChallengeHash) ‖ DES(K3, ChallengeHash)
+ *
+ * where the 16-octet `NtPasswordHash = MD4(UTF-16LE(password))` is split into three
+ * 56-bit keys at bit offsets 0, 56 and 112 — *bit* offsets, because a DES key is
+ * 56 significant bits packed seven to an octet with the eighth bit as parity. A
+ * byte-aligned split (the older, widely-copied reading) produces a different key
+ * and therefore a different response, which is why it is written out as a bit
+ * stream rather than as three slices.
+ *
+ * The authenticator challenge is a parameter and is never invented here: the whole
+ * point of it is that the client had to be told it out of band.
  */
 export function verifyMsChapV2(
   stored: string,
   attribute: Buffer,
-  challenge: Buffer
+  authenticatorChallenge: Buffer,
+  userName: string
 ): boolean {
-  if (challenge.length !== 16) return false;
+  if (authenticatorChallenge.length !== 16) return false;
 
-  // The RFC 2759 value is 42 bytes — peer challenge (16) ‖ reserved (1) ‖
-  // NTResponse (24) ‖ flags (1) — and as a RADIUS attribute it is 43, with a
-  // leading identifier byte.
-  //
-  // Which of the two arrives depends on the NAS, so both are accepted. Strict
-  // equality on either length was the earlier version of this check and it
-  // rejected correct logins, because a MikroTik sends the 42-byte value while the
-  // RADIUS encoding of it is 43 — the check was demanding a length that matches
-  // neither. The floor is 41 because the challenge hash ends at byte 41.
-  const value = attribute.length === 43 ? attribute.subarray(1) : attribute;
-  if (value.length < 41) return false;
+  const value = stripLengthHeader(attribute);
+  if (!value) return false;
 
-  const peerChallenge = value.subarray(0, 16);
-  // Byte 16 is Reserved; RFC 2759 says to ignore it.
-  const ntHash = value.subarray(17, 33);
-  const challengeHash = value.subarray(33, 41);
+  const peerChallenge = value.subarray(2, 18);
+  const reserved = value.subarray(18, 26);
+  const ntResponse = value.subarray(26, 50);
 
-  return (
-    verifyNtHash(stored, peerChallenge, ntHash) &&
-    verifyChallengeHash(stored, peerChallenge, challenge, challengeHash)
-  );
-}
+  // RFC 2759 §4: "Reserved, must be zero." A non-zero value means the peer is
+  // speaking something else, and continuing would mean guessing at its layout.
+  for (const b of reserved) if (b !== 0) return false;
 
-/** `SHA-256(peerChallenge ‖ password)`, the first 16 bytes. */
-function sha256Truncate16(input: Buffer): Buffer {
-  return createHash("sha256").update(input).digest().subarray(0, 16);
+  const expected = msChapV2NtResponse(stored, peerChallenge, authenticatorChallenge, userName);
+  return timingSafeEqual(expected, ntResponse);
 }
 
 /**
- * The stage-1 check: the client proved it holds the password.
- *
- * UTF-16LE, not UTF-8: RFC 2759 defines the peer challenge over the password's
- * *Unicode* encoding, and that is what a MikroTik computes. A UTF-8 byte string
- * happens to match for a pure-ASCII password's first 16 bytes only by accident of
- * length, and diverges for anything else — so the encoding is stated rather than
- * left to a default.
+ * The RADIUS attribute carries a one-byte length header; a value that has already
+ * had it stripped arrives as-is. Anything else is not a response we can parse.
  */
-function verifyNtHash(password: string, peerChallenge: Buffer, actual: Buffer): boolean {
-  // The NT *hash*, not the password: RFC 2759 §8.7 defines the proof as
-  // `SHA-256(PeerChallenge ‖ NtPasswordHash)`, where NtPasswordHash is the MD4 of
-  // the UTF-16LE password. Hashing the raw password instead is a mismatch every
-  // time, and it fails as a reject on every MS-CHAPv2 login.
-  const expected = sha256Truncate16(
-    Buffer.concat([peerChallenge, md4Utf16Le(password)])
-  );
-  return timingSafeEqual(expected, actual);
+function stripLengthHeader(attribute: Buffer): Buffer | null {
+  if (attribute.length === MS_CHAP2_RESPONSE_LEN) return attribute;
+  if (attribute.length === MS_CHAP2_RESPONSE_LEN + 1) return attribute.subarray(1);
+  return null;
 }
 
 /**
- * The stage-2 check, RFC 2759 §8.2:
+ * RFC 2759 §8.1, `GenerateNTResponse`.
  *
- *   ChallengeHash = DES(NtHash ‖ PeerChallenge ‖ 0) XOR DES(Challenge ‖ PeerChallenge ‖ 0)
- *
- * taking the first 8 bytes of the result, with a 7-byte key taken from the NT
- * hash. DES is the obsolete cipher RFC 2759 specifies, so this is not a choice —
- * a MikroTik computes exactly this and nothing else will interoperate.
+ * Exported because `tests/radius.test.mjs` checks it against the RFC's own
+ * published trace (§9.2) rather than against itself — a verifier built from the
+ * same code as the thing it verifies proves nothing about interoperability.
  */
-function verifyChallengeHash(
+export function msChapV2NtResponse(
   password: string,
   peerChallenge: Buffer,
-  challenge: Buffer,
-  actual: Buffer
-): boolean {
+  authenticatorChallenge: Buffer,
+  userName: string
+): Buffer {
+  const challenge = msChapV2ChallengeHash(peerChallenge, authenticatorChallenge, userName);
   const ntHash = md4Utf16Le(password);
-  // Only 7 bytes of an 8-byte DES key are significant; the eighth is parity.
-  const key = Buffer.from([ntHash[0], ntHash[1], ntHash[2], ntHash[3], ntHash[4], ntHash[5], ntHash[6], 0]);
 
-  const withNt = desEncrypt(
-    Buffer.concat([ntHash, peerChallenge, Buffer.from([0, 0, 0, 0])]),
-    key
-  );
-  const withChallenge = desEncrypt(
-    Buffer.concat([challenge, peerChallenge, Buffer.from([0, 0, 0, 0])]),
-    key
-  );
+  // Three 56-bit keys from the 128-bit hash, taken as a bit stream. The hash is
+  // zero-padded to 168 bits, so the third key is 16 real bits and 40 zeros —
+  // which is what the RFC's trace has and what a MikroTik computes.
+  const bits: number[] = [];
+  for (const byte of ntHash) for (let i = 7; i >= 0; i--) bits.push((byte >> i) & 1);
+  while (bits.length < 168) bits.push(0);
 
-  const expected = Buffer.alloc(8);
-  for (let i = 0; i < 8; i++) expected[i] = withNt[i] ^ withChallenge[i];
-  return timingSafeEqual(expected, actual);
+  const parts: Buffer[] = [];
+  for (let block = 0; block < 3; block++) {
+    const key = Buffer.alloc(8);
+    for (let octet = 0; octet < 8; octet++) {
+      let value = 0;
+      for (let bit = 0; bit < 7; bit++) value = (value << 1) | bits[block * 56 + octet * 7 + bit];
+      // Bit 8 of a DES key octet is parity and PC1 discards it, so its value
+      // cannot affect the cipher; zero is correct and makes the key reproducible.
+      key[octet] = value << 1;
+    }
+    parts.push(desEncrypt(challenge, key));
+  }
+  return Buffer.concat(parts);
+}
+
+/**
+ * RFC 2759 §8.2, `ChallengeHash`: the first eight bytes of
+ * SHA-1(PeerChallenge ‖ AuthenticatorChallenge ‖ UserName).
+ *
+ * The user name is used *without* any Windows NT domain prefix, per §8.2's note —
+ * a MikroTik configured with a domain-qualified name computes a different hash
+ * and is rejected, which looks like a wrong password.
+ */
+export function msChapV2ChallengeHash(
+  peerChallenge: Buffer,
+  authenticatorChallenge: Buffer,
+  userName: string
+): Buffer {
+  return createHash("sha1")
+    .update(Buffer.concat([
+      peerChallenge,
+      authenticatorChallenge,
+      Buffer.from(stripDomain(userName), "ascii"),
+    ]))
+    .digest()
+    .subarray(0, 8);
+}
+
+/** Everything before the last backslash, or the whole string if there is none. */
+export function stripDomain(name: string): string {
+  const i = name.lastIndexOf("\\");
+  return i >= 0 ? name.slice(i + 1) : name;
+}
+
+/**
+ * RFC 2759 §8.7, `GenerateAuthenticatorResponse`: the 42-octet
+ * "S=" + 40 uppercase hex digits the *server* must return in an Access-Accept.
+ *
+ * A MikroTik negotiates mutual authentication, so a server that accepts the
+ * subscriber's proof and then says nothing back is a peer that dropped half the
+ * protocol; depending on the router the session is torn down or the peer simply
+ * never trusts the link. Two SHA-1 rounds over the magic constants below, which
+ * RFC 2759 §8.7 defines by their ASCII text.
+ */
+export function msChapV2Success(
+  password: string,
+  ntResponse: Buffer,
+  peerChallenge: Buffer,
+  authenticatorChallenge: Buffer,
+  userName: string
+): string {
+  const MAGIC1 = Buffer.from("Magic server to client signing constant", "ascii"); // 39
+  const MAGIC2 = Buffer.from("Pad to make it do more than one iteration", "ascii"); // 41
+
+  const ntHash = md4Utf16Le(password);
+  const passwordHashHash = md4(ntHash);
+
+  const first = createHash("sha1")
+    .update(Buffer.concat([passwordHashHash, ntResponse, MAGIC1]))
+    .digest();
+  const challenge = msChapV2ChallengeHash(peerChallenge, authenticatorChallenge, userName);
+  const second = createHash("sha1")
+    .update(Buffer.concat([first, challenge, MAGIC2]))
+    .digest();
+
+  return "S=" + second.toString("hex").toUpperCase();
+}
+
+/**
+ * The decoded parts of an MS-CHAPv2 response, for building the Success reply.
+ *
+ * Returns null when the layout is not RFC 2759, so a malformed response cannot
+ * reach the point where a Success string is computed over nonsense.
+ */
+export function parseMsChapV2Response(attribute: Buffer): {
+  ident: number;
+  peerChallenge: Buffer;
+  ntResponse: Buffer;
+} | null {
+  const value = stripLengthHeader(attribute);
+  if (!value) return null;
+  for (const b of value.subarray(18, 26)) if (b !== 0) return null;
+  return {
+    ident: value[0],
+    peerChallenge: Buffer.from(value.subarray(2, 18)),
+    ntResponse: Buffer.from(value.subarray(26, 50)),
+  };
 }
 
 function md5Bytes(input: Buffer): Buffer {
@@ -385,6 +482,99 @@ export function desEncrypt(block: Buffer, key: Buffer): Buffer {
 }
 
 /* ------------------------------------------------------------------ */
+/* Simultaneous-Use                                                    */
+/* ------------------------------------------------------------------ */
+
+/** The message a subscriber sees when they are already connected elsewhere. */
+export const REPLY_SESSION_LIMIT =
+  "Session limit reached — another device is already connected";
+
+/**
+ * Reserves one of a subscriber's allowed concurrent sessions.
+ *
+ * The count and the reservation happen in one transaction, and the transaction
+ * takes a per-username advisory lock first. That lock is the whole point: two
+ * logins arriving together — which is exactly what a subscriber with two devices
+ * does — otherwise both read "0 sessions" and both are accepted, and the limit
+ * is a suggestion. With the lock, the second one waits, then sees the row the
+ * first one inserted.
+ *
+ * A plain count-then-insert without the lock has the same problem, which is why
+ * the claim is made here and not left to the NAS's first Accounting-Request: by
+ * the time accounting arrives both logins have already been accepted, and
+ * refusing one then means dropping a session the customer already has.
+ *
+ * The claim is reconciled in `accounting.ts`: when the real `Start` arrives with
+ * a real session id, the placeholder for that username is removed in the same
+ * transaction, so the session is counted once and not twice.
+ */
+export async function claimSession(
+  username: string,
+  nasIp: string
+): Promise<{ allowed: boolean; reason: string }> {
+  const s = await getSettings();
+  const raw = s["radius.simultaneousUse"];
+  const limit = Number(raw);
+
+  // A blank or non-numeric setting must not read as 0 (unlimited) by accident:
+  // that would silently disable the control for every subscriber. Anything that
+  // is not a number falls back to the documented default of 1, and only a literal
+  // "0" means unlimited.
+  const max = Number.isInteger(limit) && limit >= 0 ? limit : 1;
+  if (max === 0) return { allowed: true, reason: "unlimited sessions" };
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      // hashtext() gives a stable 32-bit key from the username. A collision
+      // serialises two unrelated subscribers for the duration of one
+      // transaction, which costs microseconds; the alternative — no lock — lets a
+      // genuine double-login through.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${username}))`;
+
+      const live = await tx.radiusAccounting.count({
+        where: { username, stoppedAt: null },
+      });
+
+      if (live >= max) {
+        return {
+          allowed: false,
+          reason: `session limit reached — ${live} of ${max} concurrent session${max === 1 ? "" : "s"} already open`,
+        };
+      }
+
+      // A placeholder row, because the real session id arrives with the first
+      // Accounting-Request and there is nothing to key on until then. It counts as
+      // live immediately, which is what makes the second of two simultaneous
+      // logins see it.
+      await tx.radiusAccounting.create({
+        data: {
+          username,
+          // Unique, and clearly not a real session id so accounting's upsert on
+          // `acctSessionId` can never collide with one.
+          acctSessionId: `claim:${username}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+          nasIp,
+          status: "Start",
+          // Expiry is backdated so the stale-session reaper removes an abandoned
+          // claim on its next pass rather than leaving it counting forever for a
+          // customer whose router never authenticated.
+          startedAt: new Date(Date.now() - 10 * 60 * 1000),
+        },
+      });
+
+      return { allowed: true, reason: `session ${live + 1} of ${max} claimed` };
+    });
+  } catch (e) {
+    // A failed claim must not be read as "allowed". Refusing is the safe
+    // direction: the customer retries, and a login that never happened is a much
+    // smaller problem than two sessions the limit was supposed to prevent.
+    return {
+      allowed: false,
+      reason: `the session limit could not be checked (${e instanceof Error ? e.message : "unknown error"})`,
+    };
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* The decision                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -400,6 +590,14 @@ export type AuthDecision = {
   framedIp?: string;
   /** True when the account exists and the password was right, but the state said no. */
   credentialOk?: boolean;
+  /**
+   * RFC 2759 §8.7 mutual authentication, for an MS-CHAPv2 login.
+   *
+   * Set only when the client proved mutual authentication, because the Success
+   * string is computed over values taken from its own response — a client that
+   * used PAP or CHAP has nothing to be authenticated back to.
+   */
+  msChapSuccess?: string;
 };
 
 /**
@@ -410,7 +608,12 @@ export type AuthDecision = {
  * number the expiry sweep honours, and a customer suspended by that sweep is
  * rejected here by reading the same column it wrote.
  */
-export async function decide(username: string, creds: Credentials): Promise<AuthDecision> {
+export async function decide(
+  username: string,
+  creds: Credentials,
+  /** The NAS this request came from, for the session claim below. */
+  nasIp: string = ""
+): Promise<AuthDecision> {
   if (!username) return { allowed: false, reason: "no username in the request" };
   if (creds.method === "none" || !creds.value) {
     // Not "wrong password" — there was no credential at all, and saying so tells
@@ -435,7 +638,7 @@ export async function decide(username: string, creds: Credentials): Promise<Auth
     return { allowed: false, reason: "no such subscriber" };
   }
 
-  const ok = verifyCredential(customer.password, creds);
+  const ok = verifyCredential(customer.password, creds, username);
   if (!ok) {
     return { allowed: false, reason: "wrong password", username };
   }
@@ -484,6 +687,35 @@ export async function decide(username: string, creds: Credentials): Promise<Auth
     };
   }
 
+  // Simultaneous-Use. Last, and last *inside* the transaction, so the count that
+  // is checked is the count the claim is made against. See `claimSession`.
+  const claim = await claimSession(username, nasIp);
+  if (!claim.allowed) {
+    return {
+      allowed: false,
+      reason: claim.reason,
+      username,
+      credentialOk: true,
+    };
+  }
+
+  // MS-CHAPv2 is mutually authenticated, so the reply carries an
+  // AuthenticatorResponse. Computed from the *verified* response, which is why it
+  // comes after the check above rather than being available to it.
+  let msChapSuccess: string | undefined;
+  if (creds.method === "MS-CHAPv2" && creds.challenge && creds.value) {
+    const parsed = parseMsChapV2Response(creds.value);
+    if (parsed) {
+      msChapSuccess = msChapV2Success(
+        customer.password,
+        parsed.ntResponse,
+        parsed.peerChallenge,
+        creds.challenge,
+        username
+      );
+    }
+  }
+
   return {
     allowed: true,
     customerId: customer.id,
@@ -491,10 +723,24 @@ export async function decide(username: string, creds: Credentials): Promise<Auth
     credentialOk: true,
     rateLimit: rateLimitFor(customer.package),
     sessionTimeoutSec: sessionTimeout(customer.expiryDate),
+    msChapSuccess,
   };
 }
 
-export function verifyCredential(stored: string, creds: Credentials): boolean {
+/**
+ * Checks one credential against the stored password.
+ *
+ * `userName` is needed only by MS-CHAPv2, because RFC 2759 §8.2 mixes the user
+ * name into the challenge hash. It is the name *as the request carried it*, not
+ * the stored one: a MikroTik configured with a different spelling computes a
+ * different hash, and using the stored name here would accept a login that the
+ * router itself will not complete.
+ */
+export function verifyCredential(
+  stored: string,
+  creds: Credentials,
+  userName: string = ""
+): boolean {
   if (!creds.value) return false;
   switch (creds.method) {
     case "PAP": {
@@ -505,12 +751,11 @@ export function verifyCredential(stored: string, creds: Credentials): boolean {
     case "CHAP":
       return verifyChap(stored, creds.value);
     case "MS-CHAPv2":
-      // `creds.challenge` is the challenge this server sent. It is absent when a
-      // request carried no MS-CHAP2-Challenge, and the verifier rejects rather
-      // than falling back to a stage that would not prove the client answered
-      // *this* session.
+      // Absent challenge: the peer never sent MS-CHAP-Challenge, so there is
+      // nothing to answer and nothing to verify against. Rejected rather than
+      // substituted.
       if (!creds.challenge) return false;
-      return verifyMsChapV2(stored, creds.value, creds.challenge);
+      return verifyMsChapV2(stored, creds.value, creds.challenge, userName);
     default:
       return false;
   }
@@ -549,6 +794,20 @@ export function sessionTimeout(expiryDate: Date | null, now: Date = new Date()):
 /** The reply attributes for an Access-Accept. */
 export function acceptAttributes(decision: AuthDecision): RadiusAttr[] {
   const attributes: RadiusAttr[] = [];
+
+  // MS-CHAP2-Success first: a MikroTik negotiating mutual authentication checks
+  // for it before it will bring the interface up, so an Accept without it leaves
+  // the subscriber authenticating forever. Attached as a Buffer because attribute
+  // 25 aliases MS-CHAP2-Response in the dictionary and the shared type is
+  // `octets` — see radius/dictionaries/dictionary.mschap2.
+  if (decision.msChapSuccess) {
+    attributes.push([
+      "Vendor-Specific",
+      MICROSOFT_VENDOR,
+      [["MS-CHAP2-Success", Buffer.from(decision.msChapSuccess, "ascii")]],
+    ]);
+  }
+
   if (decision.rateLimit) {
     attributes.push(["Vendor-Specific", MIKROTIK_VENDOR, [["Mikrotik-Rate-Limit", decision.rateLimit]]]);
   }

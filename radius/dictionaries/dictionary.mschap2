@@ -1,32 +1,72 @@
-# Microsoft vendor attributes for MS-CHAP and MS-CHAPv2.
+# Microsoft vendor attributes (RFC 2439 / RFC 2548 / RFC 2759).
 #
 # The `radius` package ships the RFC dictionaries but not Microsoft's, and these
-# are the two attributes a MikroTik PPPoE server negotiates by default — so
-# without this file a RADIUS server answers every login with Access-Reject and
-# the reason is a silently unknown attribute rather than a wrong password.
+# are the attributes a MikroTik PPPoE server negotiates by default — so without
+# this file a RADIUS server answers every login with Access-Reject, and the reason
+# is a silently unknown attribute rather than a wrong password.
+#
+# **Attribute numbers are shared by direction**, which is the detail that trips
+# everyone up once:
+#
+#   11  MS-CHAP-Challenge   (authenticator → peer, sent before the peer's response)
+#       MS-CHAP2-Verify     (peer → authenticator, in an Accept)
+#   25  MS-CHAP2-Response   (peer → authenticator, in a request)
+#       MS-CHAP2-Success    (authenticator → peer, in an Accept)
+#
+# There is no "MS-CHAP2-Challenge" attribute. A server sends its challenge as
+# MS-CHAP-Challenge (11) and its mutual-authentication reply as MS-CHAP2-Success
+# (25); inventing the name is a common reason a hand-rolled MS-CHAPv2 server
+# rejects every login.
+#
+# ## Both names, one entry, and why that matters
+#
+# The parser keeps one entry per attribute id and one name per entry. Two names for
+# one id alias the *same* entry, so the type declared last wins for both. That
+# forces two consequences this file is arranged around:
+#
+#   - **Decoding must produce the request-side names**, because those are what a
+#     peer sends us and what the auth handler reads. So MS-CHAP2-Success and
+#     MS-CHAP2-Verify are declared *before* MS-CHAP-Challenge and MS-CHAP2-Response.
+#   - **The shared type is `octets`**, so the Access-Accept's MS-CHAP2-Success must
+#     be attached as a raw Buffer rather than as a JS string. A Buffer is written
+#     verbatim by the codec, so the wire bytes are right regardless, and the
+#     alternative — typing the shared entry `string` for Success's sake — would
+#     change the type decoding reports for the 25-octet response and corrupt the
+#     parse. `radius/auth.ts` encodes it as a Buffer and says why.
 #
 # Deliberately typed `octets`, never `encrypt=1`. `encrypt=1` tells the package to
-# run the RADIUS User-Password cipher (MD5 of the secret chained with the
-# request authenticator) over the value, which is a completely different
-# algorithm from what a CHAP response is. Applying it would "decrypt" the
-# challenge into nonsense and make every CHAP login fail for a reason that looks
-# like a bad password. A CHAP response is transmitted in the clear, like PAP, and
-# the security comes from the challenge it answers — not from the transport.
+# run the RADIUS User-Password cipher (MD5 of the secret chained with the request
+# authenticator) over the value, which is a completely different algorithm from
+# what a CHAP response is. Applying it would "decrypt" the challenge into nonsense
+# and make every CHAP login fail for a reason that looks like a wrong password. A
+# CHAP response is transmitted in the clear, like PAP; the security comes from the
+# challenge it answers, not from the transport.
 
 VENDOR Microsoft 311
 
 BEGIN-VENDOR Microsoft
 
-# RFC 2439 — MS-CHAP
-VENDORATTR 311 MS-CHAP-Challenge 11 octets
-VENDORATTR 311 MS-CHAP-Response 1 octets
+# RFC 2759 §8.10 — the peer challenge carried in a Failure packet
+VENDORATTR 311 MS-Peer-Challenge 16 octets
 
-# RFC 2759 — MS-CHAPv2
-VENDORATTR 311 MS-CHAP2-Challenge 25 octets
-VENDORATTR 311 MS-CHAP2-Response 1 octets
+# --- reply side: declared first so they do not win the decode name ---
+
+# RFC 2759 §8.7 — the server's mutual-authentication reply. Attached as a Buffer;
+# see the note above.
+VENDORATTR 311 MS-CHAP2-Success 25 octets
+
+# RFC 2759 §8.8 — the server's verification of the peer
 VENDORATTR 311 MS-CHAP2-Verify 11 octets
 
-# RFC 3079 / 2439 — the peer challenge MS-CHAP2 sends back in its Access-Challenge
-VENDORATTR 311 MS-Peer-Challenge 16 octets
+# --- request side: declared last so decoding produces these names ---
+
+# RFC 2548 — the authenticator's challenge
+VENDORATTR 311 MS-CHAP-Challenge 11 octets
+
+# RFC 2759 §4 — the peer's response
+VENDORATTR 311 MS-CHAP2-Response 25 octets
+
+# RFC 2439 — MS-CHAP v1's response, still offered alongside v2
+VENDORATTR 311 MS-CHAP-Response 1 octets
 
 END-VENDOR Microsoft

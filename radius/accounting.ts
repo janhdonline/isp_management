@@ -113,36 +113,57 @@ export async function applyAccounting(
   };
 
   if (status === "Start") {
-    // Upsert, not create: a resent Start must reopen the same row. Preserving
-    // `createdAt` and zeroing the counters is what makes a restarted session
-    // start from its own new totals rather than inheriting the old ones.
-    const row = await prisma.radiusAccounting.upsert({
-      where: { acctSessionId: fields.acctSessionId },
-      create: {
-        ...base,
-        acctSessionId: fields.acctSessionId,
-        status: "Start",
-        startedAt: now,
-        stoppedAt: null,
-        seq: fields.sessionTime,
-        inputOctets: fields.inputOctets,
-        outputOctets: fields.outputOctets,
-      },
-      update: {
-        ...base,
-        status: "Start",
-        startedAt: now,
-        stoppedAt: null,
-        seq: fields.sessionTime,
-        inputOctets: fields.inputOctets,
-        outputOctets: fields.outputOctets,
-      },
-    });
+    // The auth path reserves the subscriber's slot with a placeholder row before
+    // it answers, because by the time accounting arrives two simultaneous logins
+    // have both been accepted. Now that the real session id is known, the
+    // placeholder is retired — in the same transaction that opens the session, so
+    // a reader can never see both the claim and the session and count a customer
+    // as having two sessions where they have one.
+    //
+    // Scoped to `username` rather than to a session id because that is all a NAS
+    // tells us: the placeholder is not linked to the request that produced it.
+    // Retiring *all* of this username's claims is correct, since a second Start
+    // means the earlier one did not happen.
+    //
+    // The upsert is what makes a resent Start reopen the same row rather than
+    // duplicating it: `create` handles a first Start, `update` handles a resend,
+    // and both zero the counters so a restarted session reports its own totals
+    // rather than inheriting the old one's.
+    // Results come back in the order the statements were queued: the delete's
+    // count, then the upserted row.
+    const [, session] = await prisma.$transaction([
+      prisma.radiusAccounting.deleteMany({
+        where: { username: fields.username, acctSessionId: { startsWith: "claim:" } },
+      }),
+      prisma.radiusAccounting.upsert({
+        where: { acctSessionId: fields.acctSessionId },
+        create: {
+          ...base,
+          acctSessionId: fields.acctSessionId,
+          status: "Start",
+          startedAt: now,
+          stoppedAt: null,
+          seq: fields.sessionTime,
+          inputOctets: fields.inputOctets,
+          outputOctets: fields.outputOctets,
+        },
+        update: {
+          ...base,
+          status: "Start",
+          startedAt: now,
+          stoppedAt: null,
+          seq: fields.sessionTime,
+          inputOctets: fields.inputOctets,
+          outputOctets: fields.outputOctets,
+        },
+      }),
+    ]);
+
     return {
       ok: true,
       status,
       ignored: false,
-      sessionId: row.acctSessionId,
+      sessionId: session.acctSessionId,
       detail: `session started`,
     };
   }

@@ -111,6 +111,14 @@ export const DEFAULT_SETTINGS: {
   /// the internet generates packets forever, so the table is pruned rather than
   /// left to grow; 7 days is long enough to investigate a disputed session.
   { key: "radius.logRetentionDays", value: "7", group: "Network" },
+  /// How many sessions one username may have open at once.
+  ///
+  /// "0" is unlimited. The default is 1 because a PPPoE subscriber with two live
+  /// sessions is nearly always credential sharing — one account, two households —
+  /// and the FUP allowance is then spent by two people, with the operator
+  /// billing one. Set to 0 for a flat-rate product where sharing is not a
+  /// concern and a second device being refused is only a support call.
+  { key: "radius.simultaneousUse", value: "1", group: "Network" },
   { key: "network.mikrotikApiHost", value: "10.10.0.2", group: "Network" },
   { key: "network.mikrotikApiPort", value: "8728", group: "Network" },
   { key: "network.mikrotikUsername", value: "apiuser", group: "Network" },

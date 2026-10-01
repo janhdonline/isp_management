@@ -1158,16 +1158,30 @@ offline.
 stored customer password, then the account's state decides:
 
 - PAP, CHAP and MS-CHAPv2 — the last being what a MikroTik PPPoE server
-  negotiates. MD4 and DES are reached through local implementations because
-  modern OpenSSL ships both disabled; both are checked against published vectors
-  (RFC 1320 for MD4, FIPS 81 for DES) rather than trusted.
-- Access-Accept carries **Mikrotik-Rate-Limit** as `<down>M/<up>M` from the
-  package's speeds, and **Session-Timeout** = seconds until expiry, capped at a
-  day. The rate limit is the point: it is what removes the need to provision a
-  PPP secret per subscriber. Down is first because that is how a MikroTik reads
-  the pair.
+  negotiates. MD4 is a local implementation because modern OpenSSL ships it
+  disabled; it is checked against all seven RFC 1320 vectors rather than trusted.
+  DES comes from `crypto-js` (Node's DES is legacy-provider only) and is checked
+  against the FIPS 81 known-answer vector.
+- **MS-CHAPv2 is RFC 2759**, and the two details that decide whether it works at
+  all are: the authenticator's challenge arrives as **MS-CHAP-Challenge** (vendor
+  311 type 11) — there is no MS-CHAP2-Challenge attribute, and a server that
+  "sends" one under that name rejects every real MikroTik; and the NT-Response's
+  three DES keys are 56-bit slices of the 128-bit password hash taken at *bit*
+  offsets 0, 56 and 112, zero-padded, because a DES key is seven significant
+  bits per octet. The byte-aligned reading gives a different key and a different
+  response. Verified against RFC 2759 §9.2's published trace.
+- Access-Accept carries **MS-CHAP2-Success** (RFC 2759 §8.7) for a v2 login, so
+  mutual authentication completes; a MikroTik negotiating it will not bring the
+  interface up without it. Plus **Mikrotik-Rate-Limit** as `<down>M/<up>M` from
+  the package's speeds, and **Session-Timeout** = seconds until expiry, capped at
+  a day. Down is first because that is how a MikroTik reads the pair.
 - Refusal requires Active status, an unexpired date within the billing grace
   period, and no outstanding dues.
+- **Simultaneous-Use**, `radius.simultaneousUse` (default 1, 0 = unlimited). The
+  live-session count and the reservation are one transaction behind a per-username
+  advisory lock, so two simultaneous logins cannot both read a count of zero; a
+  subscriber with two devices is refused the second with its own reply message,
+  distinct from the billing one because their account is fine.
 - Every refusal carries one identical Reply-Message. An unknown user is refused
   exactly as a wrong password is: a Reject that distinguished the two would turn
   port 1812 into a user-enumeration oracle.

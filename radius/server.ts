@@ -34,7 +34,13 @@ import {
   type RadiusConfig,
   type RadiusPacket,
 } from "./packet";
-import { extractCredentials, decide, acceptAttributes, REPLY_SUSPENDED } from "./auth";
+import {
+  extractCredentials,
+  decide,
+  acceptAttributes,
+  REPLY_SUSPENDED,
+  REPLY_SESSION_LIMIT,
+} from "./auth";
 import { readAccountingFields, applyAccounting, type AcctStatusType } from "./accounting";
 
 /** How often the heartbeat is written. The dashboard reads DOWN after 60s. */
@@ -230,25 +236,43 @@ async function handleAuth(
   }
 
   const username = asText(packet.attributes?.["User-Name"]) ?? "";
-  sent(socket, await answerAccessRequest(username, packet, config), rinfo);
+  sent(socket, await answerAccessRequest(username, packet, config, rinfo.address), rinfo);
 }
 
 async function answerAccessRequest(
   username: string,
   packet: RadiusPacket,
-  config: RadiusConfig
+  config: RadiusConfig,
+  nasIp: string
 ): Promise<Buffer> {
   const creds = extractCredentials(packet);
-  const decision = await decide(username, creds);
+  const decision = await decide(username, creds, nasIp);
 
   if (!decision.allowed) {
+    // The one rejection with its own message, because it is the only one a
+    // subscriber can act on: they are not wrong, their account is fine, and the
+    // same text as "please clear your dues" would send them to the billing office
+    // instead of unplugging the other router.
+    const reply =
+      decision.reason?.startsWith("session limit reached")
+        ? REPLY_SESSION_LIMIT
+        : REPLY_SUSPENDED;
+
     await logEvent(
       "reject",
       `${username || "(no username)"} rejected — ${decision.reason}`,
-      { username: username || null, outcome: "Access-Reject" }
+      {
+        username: username || null,
+        // Distinguishing the two in the log is what makes the RADIUS Live filter
+        // useful: a spike in session-limit rejects is credential sharing, a spike
+        // in the others is something else.
+        outcome: decision.reason?.startsWith("session limit reached")
+          ? "Access-Reject (session limit)"
+          : "Access-Reject",
+      }
     );
-    // One message, always, for every rejection. See REPLY_SUSPENDED.
-    return encodeResponse(packet, "Access-Reject", config.secret, [["Reply-Message", REPLY_SUSPENDED]]);
+
+    return encodeResponse(packet, "Access-Reject", config.secret, [["Reply-Message", reply]]);
   }
 
   await logEvent(

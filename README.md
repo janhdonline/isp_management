@@ -92,10 +92,15 @@ authentication offline.
 
 What it does:
 
-- answers **Access-Request** against the customer table — PAP, CHAP and MS-CHAPv2,
-  the last being what a MikroTik PPPoE server negotiates;
-- returns **Mikrotik-Rate-Limit** from the subscriber's package, which is what
-  removes the need to provision a PPP secret per customer;
+- answers **Access-Request** against the customer table — PAP, CHAP and
+  MS-CHAPv2 (RFC 2759, checked against its published §9.2 trace), the last being
+  what a MikroTik PPPoE server negotiates by default. A v2 Accept carries
+  MS-CHAP2-Success so mutual authentication completes;
+- answers with the subscriber's package speed in **Mikrotik-Rate-Limit**, which is
+  what removes the need to provision a PPP secret per customer;
+- enforces **simultaneous use** (`radius.simultaneousUse`, default 1): the count
+  and the reservation happen in one transaction behind a per-username lock, so two
+  devices logging in at once cannot both be accepted;
 - records **accounting** per session, idempotent, because accounting is UDP and
   resends are normal;
 - sends **Disconnect-Requests** when the office suspends someone who is connected.
