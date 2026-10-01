@@ -727,16 +727,31 @@ model Salary {
 // Notifications & System
 
 model Notification {
-  id          String    @id @default(cuid())
-  channel     String // SMS | Email | WhatsApp
-  recipient   String
-  customerId  String?
-  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  template    String?
-  subject     String?
-  body        String
-  status      String    @default("Sent") // Sent | Failed | Pending | Scheduled
-  error       String?
+  id     String @id @default(cuid())
+  channel String // SMS | Email | WhatsApp
+  recipient String
+  customerId String?
+  customer  Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  template  String?
+  subject   String?
+  body      String
+  status    String @default("Sent") // Sent | Failed | Pending | Scheduled
+  error     String?
+  /// Set only on reminders, to the key that makes sending one exactly-once:
+  /// `reminder:{customerId}:{invoiceId}:{kind}:{dayOffset}` (ISP.md §29).
+  ///
+  /// The uniqueness is what enforces it. A scheduled job is fired by three
+  /// different schedulers in this deployment, and two of them firing in the same
+  /// second is not a bug to guard against in application code but a race the
+  /// database has to lose one of — a "check then insert" is two queries and two
+  /// of them can pass the check. Null on ordinary manual messages, because those
+  /// are not deduplicated and several of them are legitimate.
+  idempotencyKey String? @unique
+  /// What happened on the way out, for the reminder path: which channels were
+  /// tried and why it fell through to the one that worked. `error` is only
+  /// meaningful on a failure, so a successful fallback has nowhere else to say
+  /// that it was one.
+  notes     String?
   sentById    String?
   sentBy      User?     @relation("MessageSender", fields: [sentById], references: [id], onDelete: SetNull)
   scheduledAt DateTime?

@@ -237,7 +237,13 @@ export async function sweepExpiry(): Promise<JobResult> {
 
 export async function sendScheduledMessages(): Promise<JobResult> {
   const due = await prisma.notification.findMany({
-    where: { status: "Scheduled", scheduledAt: { lte: new Date() } },
+    // `idempotencyKey: null` is a reminder row, and reminders are deliberately
+    // excluded. A held reminder needs the WhatsApp-then-SMS fallback chain that
+    // `sendReminders` runs; this job sends on the one channel recorded at
+    // scheduling time, which for a WhatsApp-first ISP is the channel that has
+    // already failed once tonight. Letting it pick them up would deliver some
+    // reminders through a different route than the rest, for no reason.
+    where: { idempotencyKey: null, status: "Scheduled", scheduledAt: { lte: new Date() } },
     select: {
       id: true,
       channel: true,
@@ -654,6 +660,18 @@ async function notifyFupExceeded(
 }
 
 /**
+ * Queues and sends the day's payment reminders (Phase F).
+ *
+ * Separate from `sendScheduledMessages` because the two have different rules:
+ * reminders are exactly-once per day and fall back between channels, while a
+ * manually scheduled message is sent once on the channel its author chose.
+ */
+export async function sendPaymentReminders(): Promise<JobResult> {
+  const { sendReminders } = await import("@/lib/services/reminders");
+  return sendReminders();
+}
+
+/**
  * Prunes the RADIUS Live log (Phase W).
  *
  * Not written inline below because it is the one job that can be expensive, and
@@ -677,6 +695,7 @@ export async function runAllJobs() {
     invoices: generateMonthlyInvoices,
     expiry: sweepExpiry,
     messages: sendScheduledMessages,
+    reminders: sendPaymentReminders,
     enforcement: retryNetworkActions,
     collection: collectPayments,
     network: syncNetwork,

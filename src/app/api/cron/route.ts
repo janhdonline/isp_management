@@ -6,6 +6,7 @@ const JOBS = [
   "invoices",
   "expiry",
   "messages",
+  "reminders",
   "enforcement",
   "collection",
   "network",

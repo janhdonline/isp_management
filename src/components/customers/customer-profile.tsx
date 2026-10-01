@@ -126,6 +126,25 @@ type Customer = {
   }[];
 };
 
+/**
+ * Reminders this customer has been sent, or held, or failed to receive.
+ *
+ * Kept separate from `notifications` rather than filtered out of it: a support
+ * agent asked "has this person been told their bill is due" needs the reminder
+ * trail on the profile, not a message list they have to know how to filter.
+ */
+export type ReminderRow = {
+  id: string;
+  idempotencyKey: string | null;
+  channel: string;
+  status: string;
+  body: string;
+  template: string | null;
+  notes: string | null;
+  error: string | null;
+  createdAt: Date;
+};
+
 type ActivityRow = { id: string; action: string; summary: string; createdAt: Date; actor: string };
 
 /* ------------------------------------------------------------------ */
@@ -186,6 +205,7 @@ export function CustomerProfileTabs({
   customer,
   activity,
   activityHref,
+  reminders,
   metrics,
   fup,
 }: {
@@ -193,6 +213,7 @@ export function CustomerProfileTabs({
   customer: Customer;
   activity: ActivityRow[];
   activityHref: string;
+  reminders: ReminderRow[];
   fup: FupUsage;
   metrics: {
     outstandingInvoices: number;
@@ -212,6 +233,7 @@ export function CustomerProfileTabs({
     { value: "connection", label: "Connection", href: href("connection") },
     { value: "complaints", label: "Complaints", href: href("complaints"), count: customer.tickets.length },
     { value: "usage", label: "Usage", href: href("usage"), count: customer.sessionLogs.length },
+    { value: "reminders", label: "Reminders", href: href("reminders"), count: reminders.length },
     { value: "history", label: "History", href: href("history") },
   ];
 
@@ -225,6 +247,7 @@ export function CustomerProfileTabs({
       {tab === "connection" ? <ConnectionTab customer={customer} /> : null}
       {tab === "complaints" ? <ComplaintsTab customer={customer} /> : null}
       {tab === "usage" ? <UsageTab customer={customer} fup={fup} /> : null}
+      {tab === "reminders" ? <RemindersTab reminders={reminders} /> : null}
       {tab === "history" ? <HistoryTab customer={customer} activity={activity} activityHref={activityHref} /> : null}
     </div>
   );
@@ -610,6 +633,98 @@ function UsageTab({ customer, fup }: { customer: Customer; fup: FupUsage }) {
 /* ------------------------------------------------------------------ */
 /* History                                                             */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* Reminders                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The reminder trail for one customer.
+ *
+ * Each row says which day of the sequence it was and which channel it went out
+ * on, because those two are the questions: "did we already tell them" is answered
+ * by the day, and "why was this an SMS" by the notes on a WhatsApp-first ISP.
+ */
+function RemindersTab({ reminders }: { reminders: ReminderRow[] }) {
+  if (reminders.length === 0) {
+    return (
+      <Card>
+        <CardHeader title="Reminders" description="Expiry and payment reminders for this customer" />
+        <CardBody>
+          <p className="text-sm text-fg-muted">
+            None yet. Automatic reminders are off by default — turn them on in{" "}
+            <Link href="/settings/notifications" className="hover:text-brand-600">
+              Settings → Notifications
+            </Link>
+            .
+          </p>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="Reminder history"
+        description="Every automatic reminder for this customer, newest first"
+      />
+      <CardBody className="p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[var(--border)] text-left text-xs uppercase tracking-wide text-fg-subtle">
+                <th className="px-3 py-2">When</th>
+                <th className="px-3 py-2">Reminder</th>
+                <th className="px-3 py-2">Channel</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Message</th>
+                <th className="px-3 py-2">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reminders.map((r) => {
+                const { kind, dayOffset } = describeReminderKey(r.idempotencyKey);
+                return (
+                  <tr key={r.id} className="border-b border-[var(--border)] last:border-0">
+                    <td className="whitespace-nowrap px-3 py-2 text-xs text-fg-muted">
+                      {formatDateTime(r.createdAt)}
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      {kind === "expiry" ? (
+                        <Badge>expiry −{dayOffset ?? 0}d</Badge>
+                      ) : (
+                        <Badge>due +{dayOffset ?? 0}d</Badge>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-xs">{r.channel}</td>
+                    <td className="px-3 py-2">
+                      <StatusBadge status={r.status} />
+                    </td>
+                    <td className="max-w-sm px-3 py-2 text-xs text-fg-muted">
+                      <span className="line-clamp-2">{r.body}</span>
+                    </td>
+                    <td className="max-w-xs px-3 py-2 text-xs text-fg-muted">
+                      {r.notes ?? r.error ?? "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+/** Reads the day offset out of `reminder:{customer}:{invoice}:{kind}:{day}`. */
+function describeReminderKey(key: string | null): { kind: string | null; dayOffset: number | null } {
+  if (!key?.startsWith("reminder:")) return { kind: null, dayOffset: null };
+  const parts = key.split(":");
+  const day = Number(parts[4]);
+  return { kind: parts[3] ?? null, dayOffset: Number.isInteger(day) ? day : null };
+}
 
 function HistoryTab({ customer, activity, activityHref }: { customer: Customer; activity: ActivityRow[]; activityHref: string }) {
   const [merged] = useState(() =>

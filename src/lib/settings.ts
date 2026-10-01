@@ -6,6 +6,7 @@ export const SETTING_GROUPS = [
   "Network",
   "Users",
   "API",
+  "Notifications",
   "Backup",
 ] as const;
 
@@ -149,6 +150,28 @@ export const DEFAULT_SETTINGS: {
   { key: "api.sslcommerzStorePassword", value: "", group: "API", isSecret: true },
   { key: "api.sslcommerzSandbox", value: "true", group: "API" },
   { key: "api.whatsappToken", value: "", group: "API", isSecret: true },
+
+  // Automatic payment reminders (Phase F)
+  //
+  // The day lists are comma-separated because the *day* is part of the reminder's
+  // identity: "3,1" means a reminder 3 days before expiry and another 1 day
+  // before, and each is sent at most once. An expiry reminder further out gives
+  // the customer time to arrange payment before a suspension notice, which is
+  // cheaper for both sides than restoring a cut line.
+  { key: "reminder.expiryDays", value: "3,1", group: "Notifications" },
+  // Days *after* the due date, same reasoning on the other side of it.
+  { key: "reminder.dueDays", value: "1,3,7", group: "Notifications" },
+  // WhatsApp first because it is free and reads better than a text message;
+  // SMS is the fallback, and a customer with no WhatsApp still gets reached.
+  { key: "reminder.channelOrder", value: "whatsapp,sms", group: "Notifications" },
+  // 22:00-07:00 is the window a Bangladeshi household is asleep and will not
+  // answer a phone about a bill. Wraps midnight, so it is not a simple range
+  // comparison.
+  { key: "reminder.quietHours", value: "22:00-07:00", group: "Notifications" },
+  // Off by default: a reminder list that starts working the moment an ISP
+  // upgrades, sending to customers who never agreed to it, is not a default
+  // anybody should inherit. Turning it on is one click in Settings.
+  { key: "reminder.enabled", value: "false", group: "Notifications" },
 
   // Backup
   { key: "backup.schedule", value: "Daily", group: "Backup" },

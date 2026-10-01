@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getCustomerFull, getCustomerActivity } from "@/lib/services/customers";
+import { customerReminders } from "@/lib/services/reminder-queries";
 import { prisma } from "@/lib/prisma";
 import { customerCycleUsage } from "@/lib/services/fup";
 import { getAllPackages } from "@/lib/services/packages";
@@ -29,10 +30,11 @@ export default async function CustomerProfilePage({
   const sp = await searchParams;
   const tab = typeof sp.tab === "string" ? sp.tab : "overview";
 
-  const [customer, packages, activity] = await Promise.all([
+  const [customer, packages, activity, reminders] = await Promise.all([
     getCustomerFull(id),
     getAllPackages(),
     getCustomerActivity(id, 40),
+    customerReminders(id),
   ]);
 
   if (!customer) notFound();
@@ -110,6 +112,7 @@ export default async function CustomerProfilePage({
             actor: a.actor?.name ?? "System",
           }))}
           activityHref="/settings/users?tab=logs"
+          reminders={reminders}
           metrics={{
             outstandingInvoices: outstandingInvoices.length,
             outstandingAmount: outstandingInvoices.reduce((s, i) => s + (i.total - i.paid), 0),

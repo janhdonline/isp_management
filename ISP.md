@@ -956,6 +956,11 @@ ISP MANAGEMENT SYSTEM
 │   ├── Bandwidth
 │   ├── Enforcement
 │   └── RADIUS Live
+├── Notifications
+│   ├── SMS
+│   ├── Email
+│   ├── Reminders
+│   └── History
 │
 ├── Support
 │   ├── Tickets
@@ -1227,6 +1232,67 @@ seconds; the password is never stored or logged.
 job keep the log bounded, with a hard cap in the writer as a backstop.
 
 docs/radius-mikrotik.md is the operator guide.
+
+------------------------------------------------------------------------
+
+## 29. Automatic Payment Reminders
+
+Notifications → Reminders, and the `reminders` cron job. Expiry and payment
+reminders go out by themselves on configured days, WhatsApp first with SMS
+fallback, at most once per (customer, invoice, kind, day).
+
+**Off by default** (`reminder.enabled`). A reminder list that starts contacting
+customers the moment an ISP upgrades, from data it already holds, is not a
+default anybody should inherit. One click in Settings → Notifications.
+
+**Scheduling.** `reminder.expiryDays` ("3,1") and `reminder.dueDays`
+("1,3,7") are comma-separated day offsets. Each day is a separate reminder, not
+a threshold: a customer expiring in 3 days gets one letter, and again the day
+before. The further-out one is what gives them time to arrange payment before a
+suspension notice, which is cheaper for both sides than restoring a cut line.
+
+**Exactly-once, enforced by the database.** `Notification.idempotencyKey` is
+unique, and the key is `reminder:{customerId}:{invoiceId}:{kind}:{dayOffset}`.
+The invoice slot is the literal `none` for an expiry reminder — there is no
+invoice, and a key that changed shape when one appeared would be a duplicate
+waiting for the next billing run.
+
+Exactly-once is a unique index and nothing else. This cron route is driven by
+three schedulers, and two runs in the same second is not a bug to guard against in
+application code but a race the database has to settle: the insert is a single
+`createMany … skipDuplicates`, so one run records the row and the other is
+dropped by the index. A check-then-insert is two queries and both can pass the
+check.
+
+**Channel fallback.** `reminder.channelOrder` is tried in order. A channel that
+is not configured is skipped without being called; one that fails falls through to
+the next. WhatsApp is first because it is free and a customer can reply to it;
+SMS reaches a customer who never opens WhatsApp. The row records the channel
+that actually delivered it and, in `notes`, which channels were tried — so a
+fallback that worked is visible rather than looking like the ISP simply does not
+use WhatsApp for reminders.
+
+If nothing delivers, the row is **Failed** with the reason. Never Sent: "Sent" is
+the word an operator reads when asking a customer whether they have been told.
+
+**Quiet hours.** `reminder.quietHours` ("22:00-07:00") wraps midnight, so it is
+two ranges rather than one comparison. A reminder that falls inside the window is
+recorded as Scheduled with a release time at the end of the window and sent on a
+later run. It is *not* handed to the generic scheduled-message job: that job
+sends on the single channel recorded at scheduling time, which for a
+WhatsApp-first ISP is the channel that has already failed once, and letting it
+pick reminders up would deliver some of them through a different route than the
+rest.
+
+**No network I/O inside a transaction.** Rows are written and committed first;
+only then is anything handed to the messaging adapters. A provider that hangs
+must not hold a transaction open, and a provider that is down must leave a
+visible Failed row rather than an uncommitted one.
+
+Network → the reminder trail is on the customer's profile as well as on
+Notifications → Reminders, because the first question a support agent asks of
+someone who says they were never told is "what did we send them, when, and down
+which channel".
 
 ------------------------------------------------------------------------
 

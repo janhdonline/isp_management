@@ -418,6 +418,9 @@ console.log("\nbackground jobs");
       headers: { authorization: `Bearer ${secret}` },
     });
     const firstBody = await first.json();
+    // Kept for the reminders section below, which asserts on the same run
+    // instead of firing the whole route a second time.
+    globalThis.__cronResults = firstBody.results ?? {};
     check("cron runs with a valid token", first.status === 200, `got ${first.status}`);
     check(
       "cron reports every job",
@@ -765,6 +768,44 @@ console.log("\nRADIUS (Phase W)");
   const nav = await api("/network");
   const navHtml = typeof nav.body === "string" ? nav.body : "";
   check("RADIUS Live is in the network nav", navHtml.includes("RADIUS Live"));
+}
+
+/* ---------------------------------------------------------------- */
+console.log("\nPayment reminders (Phase F)");
+{
+  const cronResults = globalThis.__cronResults ?? {};
+  const page = await api("/notifications/reminders");
+  check("the Reminders page renders", page.status === 200, `got ${page.status}`);
+  const html = typeof page.body === "string" ? page.body : "";
+  // Either the empty-state explanation or a populated table. Asserting the
+  // explanation alone would fail on any instance that has already sent one, which
+  // is most of them by the time anybody reads this.
+  check(
+    "the Reminders page explains itself",
+    /No reminders yet/i.test(html) || /Nothing matches these filters/i.test(html),
+    "expected either the empty-state text or a table of reminders"
+  );
+
+  const settings = await api("/settings/notifications");
+  check("Settings → Notifications renders", settings.status === 200, `got ${settings.status}`);
+  const sHtml = typeof settings.body === "string" ? settings.body : "";
+  check("it exposes the day lists", /reminder\.expiryDays/.test(sHtml) && /reminder\.dueDays/.test(sHtml));
+  check("it exposes the channel order and quiet hours", /reminder\.channelOrder/.test(sHtml) && /reminder\.quietHours/.test(sHtml));
+
+  // Reminders must stay off until an operator turns them on, so an upgraded
+  // instance does not start contacting customers it never asked. The check is
+  // made on the job's own reporting rather than by calling it with the secret,
+  // which the cron section above already covers.
+  const cronResult = cronResults?.reminders;
+  check("the cron route runs the reminders job", cronResult !== undefined, JSON.stringify(cronResults ?? {}));
+  check(
+    "it is off until an operator enables it",
+    String(cronResult?.skipped ?? "").match(/switched off/i) !== null,
+    JSON.stringify(cronResult ?? {})
+  );
+
+  const navHtml = (await api("/notifications")).body;
+  check("Reminders is in the notifications nav", String(navHtml).includes("Reminders"));
 }
 
 console.log(`\n${"─".repeat(46)}`);

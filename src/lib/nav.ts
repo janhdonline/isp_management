@@ -194,6 +194,7 @@ export const NAV: NavItem[] = [
     children: [
       { label: "SMS", href: "/notifications/sms", permission: "notifications.view" },
       { label: "Email", href: "/notifications/email", permission: "notifications.view" },
+      { label: "Reminders", href: "/notifications/reminders", permission: "notifications.view" },
       { label: "History", href: "/notifications/history", permission: "notifications.view" },
     ],
   },
@@ -208,6 +209,7 @@ export const NAV: NavItem[] = [
       { label: "Network", href: "/settings/network", permission: "settings.view" },
       { label: "Users & Roles", href: "/settings/users", permission: "settings.view" },
       { label: "SMS / API", href: "/settings/api", permission: "settings.view" },
+      { label: "Notifications", href: "/settings/notifications", permission: "settings.view" },
       { label: "Backup", href: "/settings/backup", permission: "settings.view" },
     ],
   },
