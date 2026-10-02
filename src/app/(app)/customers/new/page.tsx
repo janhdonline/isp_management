@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
 import { CustomerForm } from "@/components/customers/customer-form";
+import { freeAddresses } from "@/lib/services/ipam";
 import { createCustomerAction } from "../actions";
 import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import { getSettings } from "@/lib/settings";
@@ -9,7 +10,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "New Customer" };
 
 export default async function NewCustomerPage() {
-  const [areas, packages, routers, olts, settings, resellers] = await Promise.all([
+  const [areas, packages, routers, olts, settings, resellers, free] = await Promise.all([
     prisma.area.findMany({
       where: { status: "Active" },
       include: { zone: { select: { name: true } } },
@@ -24,6 +25,7 @@ export default async function NewCustomerPage() {
       orderBy: { name: "asc" },
       select: { id: true, name: true },
     }),
+    freeAddresses(null, 200),
   ]);
 
   const prefix = settings["billing.customerPrefix"] ?? "CUS";
@@ -60,6 +62,7 @@ export default async function NewCustomerPage() {
           olts={olts.map((o) => ({ id: o.id, name: o.name }))}
           defaults={{ customerType: "Home", connectionType: "PPPoE", ipType: "Dynamic" }}
           defaultSlaHours={Number(settings["corporate.defaultSlaHours"]) || 4}
+          pools={free.map((f) => ({ ip: f.ip, pool: f.pool.name }))}
           isEdit={false}
           action={createCustomerAction}
         />

@@ -877,6 +877,16 @@ console.log("\nCorporate clients (Phase J)");
   check("the customer form still renders for everyone", newForm.status === 200 && /Customer Type/i.test(formHtml));
 }
 
+/* ---------------------------------------------------------------- */
+console.log("\nIP pools (Phase K)");
+{
+  const pools = await api("/network/ip-pools");
+  check("the IP pools page renders", pools.status === 200, `got ${pools.status}`);
+  const html = typeof pools.body === "string" ? pools.body : "";
+  check("it reports utilisation", /Utilisation/i.test(html));
+  check("it lists addresses with a status", /Allocated|Reserved|Free/.test(html));
+}
+
 console.log(`\n${"─".repeat(46)}`);
 console.log(`  ${pass} passed, ${fail} failed`);
 console.log(`${"─".repeat(46)}\n`);

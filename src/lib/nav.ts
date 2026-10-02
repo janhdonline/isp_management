@@ -94,6 +94,7 @@ export const NAV: NavItem[] = [
       { label: "Enforcement", href: "/network/enforcement", permission: "network.view" },
       { label: "RADIUS Live", href: "/network/radius", permission: "network.view" },
       { label: "Alerts", href: "/network/alerts", permission: "network.view" },
+      { label: "IP Pools", href: "/network/ip-pools", permission: "network.view" },
     ],
   },
   {

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { releasePoolAddress } from "@/lib/services/ipam";
 import { returnEquipment } from "@/lib/services/inventory";
 import { Prisma } from "@/generated/prisma/client";
 import { DEFAULT_PER_PAGE, ListParams, ListResult } from "@/lib/query";
@@ -445,6 +446,12 @@ export async function disconnectCustomer(
       disconnectedAt: new Date(),
     },
   });
+
+  // The address goes back to the pool. A disconnected customer is not holding it,
+  // and a pool that hands out addresses belonging to people who are not on them is
+  // how a duplicate-IP outage starts. Inside this transaction, so the address is
+  // never both freed and still displayed against the customer.
+  await releasePoolAddress(tx, id, "Disconnected");
   await prismaLog(
     tx,
     { action: "Disconnect", entity: "Customer", entityId: id, summary: `Disconnected ${c.name} - ${reason}` },
@@ -518,6 +525,14 @@ export async function renewCustomer(
 
 export async function deleteCustomer(id: string, userId?: string) {
   const c = await prisma.customer.findUniqueOrThrow({ where: { id } });
+
+  // Released before the row goes, not after. The allocation's `customerId` is
+  // `onDelete: SetNull`, so the address would survive as a stale Allocated row
+  // pointing at nobody — permanently unavailable to the pool and to the utilisation
+  // figure.
+  await prisma.$transaction(async (tx) => {
+    await releasePoolAddress(tx, id, "Customer deleted");
+  });
 
   // Equipment is taken back *before* the row goes, not after.
   //

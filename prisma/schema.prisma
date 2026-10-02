@@ -132,6 +132,7 @@ model Area {
 
   customers Customer[]
   routers   Router[]
+  ipPools   IpPool[]
   olts      Olt[]
   onus      Onu[]
   employees Employee[]
@@ -295,6 +296,7 @@ model Customer {
   payments     Payment[]
   walletTransactions WalletTransaction[]
   dailyUsage         DailyUsage[]
+  ipAllocation       IpAllocation?
   tickets      Ticket[]
   sessionLogs  OnlineSession[]
   packageLogs  CustomerPackageChange[]
@@ -542,6 +544,7 @@ model Router {
   /// (Phase A) is not gated by this, because a customer the office has decided
   /// to cut off should be cut off regardless.
   autoProvision Boolean @default(false)
+  ipPools       IpPool[]
   /// Whether this router authenticates subscribers against this app's RADIUS
   /// server rather than against PPP secrets on the router itself.
   ///
@@ -1280,6 +1283,72 @@ model DeviceAlert {
   @@index([status, openedAt])
   @@index([deviceType, deviceId])
   @@index([kind, status])
+}
+
+/// A routable subnet an ISP hands addresses out from (ISP.md §34).
+///
+/// A pool is the unit an operator thinks in — "the 10.10.10.0/24 for the north
+/// area" — and expanding it into `IpAllocation` rows is what makes "is that free?"
+/// answerable.
+model IpPool {
+  id     String @id @default(cuid())
+  name   String
+  /// Canonical CIDR, e.g. "10.10.10.0/24". Validated on write; the pool is not
+  /// usable until it parses.
+  cidr   String
+  /// Excluded from allocation, which is why a /24 yields 253 addresses and not 254.
+  gateway String?
+  dns     String?
+  routerId String?
+  router   Router? @relation(fields: [routerId], references: [id], onDelete: SetNull)
+  areaId   String?
+  area     Area?   @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  allocations IpAllocation[]
+
+  @@unique([name])
+  @@index([cidr])
+}
+
+/// One address inside a pool.
+///
+/// **`@unique` on `ip` is the whole point.** An ISP's two operators can pick the
+/// same address from two different free lists at the same moment, and no amount of
+/// checking in application code closes that window — the check and the insert are
+/// two statements. The index settles it: one transaction wins and the other is
+/// refused, which is why `allocate()` catches the violation rather than
+/// pre-checking.
+///
+/// `@unique` on `customerId` is the same idea from the other side: one address per
+/// customer, so a change of pool frees the old one rather than leaving a customer
+/// holding two.
+model IpAllocation {
+  id     String @id @default(cuid())
+  ip     String @unique
+  /// The same address, each octet zero-padded to three digits, so a *lexical* sort
+  /// is a *numeric* one: "10.30.0.10" before "10.30.0.2", which is what plain
+  /// string ordering gives and is not what "next free address" means to anybody
+  /// reading a subnet. Without it, auto-assign hands out .10, .11 … .19 before
+  /// ever reaching .2, and the pool fills in an order no operator would choose.
+  sortKey String
+  poolId String
+  pool   IpPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  customerId String? @unique
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  /// Free | Reserved | Allocated
+  ///
+  /// Stored rather than derived from `customerId` so an address held for a gateway
+  /// or a planned customer is not silently handed out, and so "allocated" means
+  /// one thing in the database and the same thing in the UI.
+  status String  @default("Free")
+  note   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([poolId, status])
+  @@index([status])
 }
 
 /// Failed sign-in attempts, so a lockout survives a restart and is shared

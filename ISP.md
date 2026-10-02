@@ -1523,6 +1523,66 @@ means nothing.
 
 ------------------------------------------------------------------------
 
+## 34. IP Pool Management (IPAM)
+
+`Customer.ipAddress` was free text. Two customers could be given the same address,
+nothing showed what was free, and a duplicate-IP outage was a matter of time. The
+subnet is now the unit an operator thinks in, and every address in it is a row that
+either is or is not taken.
+
+**A pool expands into one row per allocatable address.** A /24 yields 253: the
+network address, the broadcast address and the gateway are not hosts, and a router
+cannot route a pool whose gateway is inside it. A /30 leaves one. **/31 and /32 have
+no network or broadcast** (RFC 3021) and all their addresses are usable — excluding
+the first and last of a /31 would leave a subnet that cannot route, which is the one
+case a "usable hosts" helper most often gets wrong.
+
+**The unique index is the design, not the check.** Allocation is check-then-allocate:
+find a free address, then claim it, and two operators doing that at the same instant
+both read "free" and both write. The index settles it — one transaction wins, the
+other comes back as a unique violation which the caller is told about. `customerId`
+is unique for the same reason from the other side: one address per customer, so a
+change of pool frees the old one rather than leaving somebody holding two.
+
+**Two bugs this ordering hid**, both found by the concurrency tests rather than by
+reading the code:
+
+  - An auto-assign claimed its address with a plain `update`. Several at once all
+    read the same lowest-free row and all succeeded in turn — no unique violation,
+    because there was nothing to violate: one row written four times. The last
+    writer won and three customers were told they had the same address. The claim is
+    now a compare-and-swap (`updateMany` with the row's current owner in the
+    `where`), which is the statement the database makes atomic.
+  - The old address was released *after* the new one was claimed. Because
+    `customerId` is unique, claiming a second address while the first still pointed
+    at that customer was refused — and the failure looked like a collision with a
+    stranger. Release now comes first, and a caller who loses the race has its own
+    address put back.
+
+**Addresses sort numerically.** `sortKey` is the same address zero-padded per octet
+so a lexical sort is a numeric one. Plain string ordering puts "10.30.0.10" before
+"10.30.0.2", so auto-assign would fill .10 through .19 before ever reaching .2 — and
+an operator looking at the pool would wonder why. `ip` stays the human-readable
+value and keeps its uniqueness.
+
+**Existing addresses are adopted, never clobbered.** The migration adds two empty
+tables and touches nothing: `Customer.ipAddress` holds whatever years of operators
+typed into it, some of it not an address in any pool, and rewriting it from a
+migration would be destructive. Adoption is an explicit action because only an
+operator can say whether "10.10.10.7" on a customer is inside the new /24 or a
+stale note from a decommissioned range.
+
+**Release** happens on disconnect, on delete and on a change of address, inside the
+caller's transaction — between the two writes the customer row and the allocation row
+disagree, and that is exactly when an operator sees an address as free while it is
+still on somebody's line.
+
+**Reserved** is a third status for addresses held for infrastructure or a planned
+customer. Utilisation counts *allocated* only, so a reserved gateway is not a
+subscriber and does not make the pool look fuller than it is.
+
+------------------------------------------------------------------------
+
 ## Final Requirement
 
 The final UI must feel like **one unified ISP operating system**, not

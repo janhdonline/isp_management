@@ -112,6 +112,7 @@ export function CustomerForm({
   isEdit,
   action,
   defaultSlaHours = 4,
+  pools = [],
 }: {
   areas: (Option & { zone?: string | null })[];
   /** Optional: a customer with no reseller is the common case. */
@@ -123,6 +124,8 @@ export function CustomerForm({
   isEdit: boolean;
   /** Read from Settings; the placeholder for a client with no own SLA. */
   defaultSlaHours?: number;
+  /** Free addresses, for the manual picker. */
+  pools?: { ip: string; pool: string }[];
   action: (prev: FormState, formData: FormData) => Promise<FormState>;
 }) {
   const [state, formAction] = useActionState(action, {} as FormState);
@@ -130,6 +133,10 @@ export function CustomerForm({
   const [packageId, setPackageId] = useState(defaults.packageId ?? packages[0]?.id ?? "");
   const [customerType, setCustomerType] = useState(defaults.customerType ?? "Home");
   const corporate = isCorporate(customerType);
+  const free = pools;
+  const [address, setAddress] = useState(defaults.ipAddress ?? "");
+  const [autoAssign, setAutoAssign] = useState(!defaults.ipAddress);
+  void autoAssign;
   const [ipType, setIpType] = useState(defaults.ipType ?? "Dynamic");
   const [connectionDate, setConnectionDate] = useState(
     defaults.connectionDate ? defaults.connectionDate.slice(0, 10) : new Date().toISOString().slice(0, 10)
@@ -331,9 +338,59 @@ export function CustomerForm({
                 options={IP_TYPES.map((t) => ({ value: t, label: t }))}
               />
             </Field>
-            <Field label="IP Address" error={setField("ipAddress")} hint={ipType === "Static" ? "Required for static IP" : "Optional"}>
-              <Input name="ipAddress" defaultValue={defaults.ipAddress} placeholder="100.64.10.5" invalid={!!setField("ipAddress")} />
+            <Field
+              label="IP Address"
+              error={setField("ipAddress")}
+              hint={
+                ipType === "Static"
+                  ? "Required for static IP"
+                  : pools.length
+                    ? "Leave blank to take the next free address from a pool."
+                    : "Optional — no pools are defined yet."
+              }
+            >
+              {pools.length && ipType === "Static" ? (
+                // Offered only for a static address: a PPPoE customer is given one
+                // from DHCP, and offering a pool to them would be a way to hand
+                // out an address the router will overwrite at next boot.
+                <Select
+                  name="ipAddress"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="Pick a free address from a pool"
+                  options={[
+                    { value: "", label: "No address" },
+                    ...(address && !free.some((f) => f.ip === address)
+                      ? [{ value: address, label: `${address} (current)` }]
+                      : []),
+                    ...free.map((f) => ({
+                      value: f.ip,
+                      label: `${f.ip} — ${f.pool}`,
+                    })),
+                  ]}
+                />
+              ) : (
+                <Input name="ipAddress" defaultValue={defaults.ipAddress} placeholder="100.64.10.5" invalid={!!setField("ipAddress")} />
+              )}
             </Field>
+            {ipType === "Static" && pools.length ? (
+              <Field
+                label=""
+                className="sm:col-span-2"
+                hint="Leave this off to take the lowest free address in the pool automatically."
+              >
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    name="autoAssignIp"
+                    defaultChecked={!defaults.ipAddress}
+                    onChange={(e) => setAutoAssign(e.target.checked)}
+                    className="size-4 rounded border-[var(--border-strong)]"
+                  />
+                  <span>Auto-assign the next free address</span>
+                </label>
+              </Field>
+            ) : null}
             <Field label="MAC Address" error={setField("macAddress")}>
               <Input name="macAddress" defaultValue={defaults.macAddress} placeholder="A4:2B:B0:11:22:33" invalid={!!setField("macAddress")} />
             </Field>
