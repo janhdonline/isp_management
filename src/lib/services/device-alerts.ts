@@ -128,6 +128,10 @@ export async function notify(
  * The notify happens only when the insert *created* the row. Every run while the
  * device is still down takes the same unique key, loses, and returns null — so it
  * cannot notify, which is what makes a long outage one page rather than sixty.
+ *
+ * **For incidents only.** `Recovered` must go through `raiseRecovery` instead: it
+ * is a historical event rather than an open one, and giving it a dedupe key
+ * silently swallows the second recovery notice a device ever has.
  */
 export async function raiseAlert(input: {
   deviceType: DeviceType;
@@ -177,6 +181,62 @@ export async function raiseAlert(input: {
     orderBy: { openedAt: "desc" },
   });
   return { alert: created, created: true, notified: result.ok };
+}
+
+/**
+ * Records a recovery notice.
+ *
+ * Deliberately not routed through `raiseAlert`, because a recovery is a
+ * *historical event* and not an open incident, and the two differ in ways that
+ * matter:
+ *
+ *   - **No dedupe key.** A key is how one incident is kept to one row, and a
+ *     recovery is not an incident — it is the end of one. Claiming a key for it
+ *     means the second outage-and-recovery on a device finds the key still
+ *     occupied by the *first* recovery, the insert is rejected as a duplicate, and
+ *     that incident silently gets an outage page with no "it is fixed" page. The
+ *     operator is told a device is down and never told it came back.
+ *   - **Born resolved.** There is nothing outstanding about a device that is
+ *     working, so a recovery row is created `Resolved` with a `resolvedAt`. Left
+ *     `Open` it accumulates for ever, and the dashboard's open-alert count — which
+ *     is meant to answer "what is broken right now" — ends up counting every
+ *     recovery the installation has ever had.
+ *
+ * Every recovery therefore gets its own row and its own notification, with no
+ * claim to collide on.
+ */
+export async function raiseRecovery(input: {
+  deviceType: DeviceType;
+  deviceId: string;
+  deviceName: string;
+  detail: string;
+}): Promise<{ alert: { id: string } | null; created: boolean; notified: boolean }> {
+  const result = await notify(
+    "Recovered",
+    `${input.deviceType} ${input.deviceName}`,
+    input.detail
+  );
+  const now = new Date();
+
+  // No dedupeKey, so nothing to collide on and nothing to free later.
+  const row = await prisma.deviceAlert.create({
+    data: {
+      deviceType: input.deviceType,
+      deviceId: input.deviceId,
+      deviceName: input.deviceName,
+      kind: "Recovered",
+      status: "Resolved",
+      detail: input.detail,
+      dedupeKey: null,
+      resolvedAt: now,
+      notifiedAt: result.ok ? now : null,
+      notifyChannel: result.channel,
+      notifyError: result.ok ? null : result.error ?? null,
+    },
+    select: { id: true },
+  });
+
+  return { alert: row, created: true, notified: result.ok };
 }
 
 /**
@@ -270,14 +330,13 @@ export async function evaluateTransitions(
     const resolved = await resolveAlert(o.deviceType, o.deviceId, "Down");
     if (resolved > 0) recovered += 1;
 
-    const notice = await raiseAlert({
+    const notice = await raiseRecovery({
       deviceType: o.deviceType,
       deviceId: o.deviceId,
       deviceName: o.deviceName,
-      kind: "Recovered",
       detail: o.detail,
     });
-    if (notice.created && notice.notified) notified += 1;
+    if (notice.notified) notified += 1;
   }
 
   await writeState(`${STATE_KEY}.deviceStatus`, now);

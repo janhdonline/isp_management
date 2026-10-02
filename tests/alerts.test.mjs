@@ -231,7 +231,12 @@ describe("Offline → Online", () => {
     const rec = await prisma.deviceAlert.findFirstOrThrow({
       where: { deviceId: r.id, kind: "Recovered" },
     });
-    assert.equal(rec.status, "Open", "a recovery notice is open until it is read");
+    // Born Resolved, with no dedupe key: a recovery is a historical event, not an
+    // open incident. Left Open it would sit in the dashboard's open count for ever,
+    // and its key would swallow the *next* recovery notice.
+    assert.equal(rec.status, "Resolved", "there is nothing outstanding about a device that is working");
+    assert.ok(rec.resolvedAt);
+    assert.equal(rec.dedupeKey, null);
     assert.equal(sent.length, 1, "exactly one recovery notice");
     assert.match(sent[0].body, /RECOVERED/);
   });
@@ -242,6 +247,8 @@ describe("Offline → Online", () => {
     await evaluateTransitions([{ ...observe(r), status: "Offline" }]);
     await evaluateTransitions([{ ...observe(r), status: "Online" }]);
     sent = [];
+    // Still online, and there is no open Down to resolve, so there is no recovery
+    // to announce — the notice follows the incident, not the poll.
     await evaluateTransitions([{ ...observe(r), status: "Online" }]);
 
     assert.equal(
@@ -249,6 +256,58 @@ describe("Offline → Online", () => {
       1
     );
     assert.equal(sent.length, 0);
+  });
+
+  test("a second outage and recovery gets its own notice — the case that was dropped", async () => {
+    // The regression this fixes. With Recovered claiming a dedupe key, the first
+    // recovery kept that key for ever; the second outage's recovery hit the unique
+    // violation and was discarded, so the operator got paged "router down" and
+    // never told it was fixed again.
+    const r = await makeRouter("Online");
+    const cycle = async () => {
+      await evaluateTransitions([{ ...observe(r), status: "Offline" }]);
+      sent = [];
+      await evaluateTransitions([{ ...observe(r), status: "Online" }]);
+    };
+
+    await evaluateTransitions([observe(r)]);
+    await cycle();
+    assert.equal(await totalFor(r.id, "Down"), 1);
+    assert.equal(await totalFor(r.id, "Recovered"), 1);
+    assert.equal(sent.length, 1, "first recovery notified");
+
+    sent = [];
+    await cycle();
+
+    assert.equal(await totalFor(r.id, "Down"), 2, "the second outage alerts again");
+    assert.equal(
+      await totalFor(r.id, "Recovered"),
+      2,
+      "and the second recovery gets its own row instead of being swallowed by the first"
+    );
+    assert.equal(sent.length, 1, "and notifies — an outage page with no all-clear is the failure");
+
+    // Both recoveries are historical: neither is counted as open.
+    const recoveries = await prisma.deviceAlert.findMany({
+      where: { deviceId: r.id, kind: "Recovered" },
+    });
+    assert.ok(recoveries.every((x) => x.status === "Resolved"));
+    assert.ok(recoveries.every((x) => x.dedupeKey === null));
+    assert.equal(await openFor(r.id), 0, "nothing is open once the device is back");
+  });
+
+  test("three recoveries in a row each notify", async () => {
+    const r = await makeRouter("Online");
+    await evaluateTransitions([observe(r)]);
+    let notices = 0;
+    for (let i = 0; i < 3; i++) {
+      await evaluateTransitions([{ ...observe(r), status: "Offline" }]);
+      sent = [];
+      await evaluateTransitions([{ ...observe(r), status: "Online" }]);
+      notices += sent.length;
+    }
+    assert.equal(await totalFor(r.id, "Recovered"), 3, "one row per incident, no dedupe between them");
+    assert.equal(notices, 3, "and one notification each");
   });
 
   test("a second outage after a recovery alerts again", async () => {
@@ -508,6 +567,35 @@ describe("the job as a whole", () => {
     assert.match(result.skipped, /outage/);
     assert.ok(result.ran >= 1);
     assert.equal(await openFor(r.id), 1);
+  });
+
+  test("the dashboard's open count never includes Recovered rows", async () => {
+    // The banner answers "what is broken right now". A recovery left Open would sit
+    // in that count for ever, so a device fixed months ago keeps the dashboard red.
+    const r = await makeRouter("Online");
+    await evaluateTransitions([observe(r)]);
+    await evaluateTransitions([{ ...observe(r), status: "Offline" }]);
+    await evaluateTransitions([{ ...observe(r), status: "Online" }]);
+
+    const open = await listAlerts({ status: "Open" });
+    assert.ok(
+      open.rows.every((a) => a.kind !== "Recovered"),
+      "an Open list containing a Recovered means recoveries are not being resolved"
+    );
+    assert.equal(
+      open.rows.filter((a) => a.deviceId === r.id).length,
+      0,
+      "a recovered device contributes nothing to the banner"
+    );
+
+    // And a device that is genuinely down still counts.
+    await evaluateTransitions([{ ...observe(r), status: "Offline" }]);
+    const afterOutage = await listAlerts({ status: "Open" });
+    assert.equal(
+      afterOutage.rows.filter((a) => a.deviceId === r.id).length,
+      1,
+      "a real outage still registers"
+    );
   });
 
   test("reading the list filters by status and device", async () => {

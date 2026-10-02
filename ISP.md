@@ -1421,6 +1421,19 @@ check-then-insert is two queries and a window in which two concurrent runs both
 pass the check, which is precisely the run the cron route gets when two schedulers
 fire at once.
 
+**Recoveries are history, not incidents.** A `Recovered` row is created
+`Resolved`, with `dedupeKey: null`, and notifies through the same call. Two
+reasons, both of them failures this design already had:
+
+  - **No dedupe key on a recovery.** A key is how one *incident* is kept to one
+    row, and a recovery is the end of an incident rather than an incident of its
+    own. Claiming a key meant the first recovery kept it for ever, so the second
+    outage-and-repair on a device hit the unique violation and was discarded — that
+    incident got an "unreachable" page and no "it is fixed" page.
+  - **Never Open.** There is nothing outstanding about a device that is working.
+    Left `Open`, every recovery the installation has ever had accumulates in the
+    dashboard's open count, which is meant to answer "what is broken right now".
+
 **Transitions, not states.** The monitor remembers the last status it saw per
 device, in a settings row. That memory is not the same thing as the open alert: an
 open alert answers "do we believe this is broken?", the remembered status answers
