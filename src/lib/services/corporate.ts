@@ -116,3 +116,38 @@ export function resolveDefaultSlaHours(raw: string | undefined): number {
   const n = Number(raw ?? 4);
   return Number.isInteger(n) && n > 0 ? n : 4;
 }
+
+/**
+ * The `slaHours` a customer is saved with.
+ *
+ * **Null for anything that is not a corporate or dedicated account**, and that is
+ * the whole point of this function existing separately.
+ *
+ * The bug it prevents: writing
+ *
+ *     slaHours: corporateFieldsFor(d).slaHours ?? defaultHours
+ *
+ * in the save path, where `corporateFieldsFor` returns `slaHours: null` for a Home
+ * account. The `??` then falls through and every residential customer created or
+ * edited through the UI lands in the database with the corporate default of 4
+ * hours. Nothing breaks *today* only because every reader checks `customerType`
+ * first — and that is precisely the problem: the column says a home customer is
+ * SLA-bound, and the first reader that trusts the column rather than the type
+ * (Phase U's tracker, a report, a CSV export) starts treating a residential
+ * account as a contract.
+ *
+ * The type decides whether there is an SLA at all; the default only fills in what
+ * one already exists and left unset. Those are different questions and they do not
+ * belong on one line.
+ */
+export function slaHoursFor(
+  customerType: string | null | undefined,
+  requestedSlaHours: number | null | undefined,
+  defaultHours: number
+): number | null {
+  if (!isCorporate(customerType)) return null;
+  if (Number.isInteger(requestedSlaHours) && (requestedSlaHours ?? 0) > 0) {
+    return requestedSlaHours as number;
+  }
+  return defaultHours;
+}

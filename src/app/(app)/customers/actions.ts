@@ -4,7 +4,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { isCorporate } from "@/lib/enums";
-import { corporateFieldsFor, resolveDefaultSlaHours } from "@/lib/services/corporate";
+import {
+  corporateFieldsFor,
+  resolveDefaultSlaHours,
+  slaHoursFor,
+} from "@/lib/services/corporate";
 import { requirePermission } from "@/lib/auth";
 import { customerSchema, customerUpdateSchema, fieldErrors, FieldErrors } from "@/lib/validators";
 import { nextNumber, Tx } from "@/lib/counter";
@@ -87,7 +91,15 @@ export async function createCustomerAction(
         // default so every corporate client has a deadline — a ticket with no
         // slaDueAt gives the SLA tracker (Phase U) nothing to measure against.
         ...corporateFieldsFor(d),
-        slaHours: corporateFieldsFor(d).slaHours ?? resolveDefaultSlaHours((await getSettings())["corporate.defaultSlaHours"]),
+        // The type decides whether there is an SLA at all; the Settings default only
+        // fills in what one already exists and left unset. A `??` against
+        // `corporateFieldsFor(...).slaHours` here would give every Home customer a
+        // 4-hour commitment they never bought.
+        slaHours: slaHoursFor(
+          d.customerType,
+          corporateFieldsFor(d).slaHours,
+          resolveDefaultSlaHours((await getSettings())["corporate.defaultSlaHours"])
+        ),
         photoUrl: d.photoUrl,
         username: d.username,
         password: d.password || undefined,
@@ -265,7 +277,15 @@ export async function updateCustomerAction(
         // `corporateFields` helper makes that symmetric, which a spread of
         // individual `?? undefined` assignments would not.
         ...corporateFieldsFor(d),
-        slaHours: corporateFieldsFor(d).slaHours ?? resolveDefaultSlaHours((await getSettings())["corporate.defaultSlaHours"]),
+        // The type decides whether there is an SLA at all; the Settings default only
+        // fills in what one already exists and left unset. A `??` against
+        // `corporateFieldsFor(...).slaHours` here would give every Home customer a
+        // 4-hour commitment they never bought.
+        slaHours: slaHoursFor(
+          d.customerType,
+          corporateFieldsFor(d).slaHours,
+          resolveDefaultSlaHours((await getSettings())["corporate.defaultSlaHours"])
+        ),
       },
     });
     await prismaLog(

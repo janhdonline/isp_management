@@ -12,6 +12,7 @@
  *     half its customers' records to a form validation error nobody can explain.
  */
 import { test, describe, before, beforeEach, after } from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { prisma } from "../src/lib/prisma.ts";
 import { saveSettings } from "../src/lib/settings.ts";
@@ -21,6 +22,7 @@ import { corporateReport, corporateCollectionReport } from "../src/lib/services/
 import {
   corporateFieldsFor,
   slaTermsFor,
+  slaHoursFor,
   resolveDefaultSlaHours,
 } from "../src/lib/services/corporate.ts";
 import { invoicePdf } from "../src/lib/services/pdf.ts";
@@ -404,6 +406,92 @@ describe("tickets against a corporate client", () => {
     // And a Home customer keeps whatever the form said.
     assert.equal(slaTermsFor({ customerType: "Home", slaHours: null }, "Medium", 4).priority, "Medium");
     assert.equal(slaTermsFor(null, "Medium", 4).hours, null);
+  });
+
+  describe("the slaHours the save path writes", () => {
+    // This is the rule that guards the *real* path. A test that inserts through
+    // Prisma proves nothing about it: the bug was in the action's data object, and
+    // the action cannot be imported from a test at all.
+    test("a Home customer is saved with null, even when a default is offered", () => {
+      // The regression: `corporateFieldsFor` returns null here, so a `??` against
+      // the Settings default put `slaHours: 4` on every residential customer
+      // created or edited through the UI.
+      for (const type of ["Home", "Business", "Bulk", "Free"]) {
+        assert.equal(slaHoursFor(type, null, 4), null, `${type} must not be SLA-bound`);
+        // And even if a stale value came out of the form with the type switched.
+        assert.equal(slaHoursFor(type, 8, 4), null, `${type} must not keep a company SLA`);
+      }
+      assert.equal(slaHoursFor(null, null, 4), null);
+      assert.equal(slaHoursFor(undefined, null, 4), null);
+      assert.equal(slaHoursFor("Something Else", null, 4), null, "an unknown type is not corporate");
+    });
+
+    test("a corporate client with its own hours keeps them", () => {
+      assert.equal(slaHoursFor("Corporate", 6, 4), 6);
+      assert.equal(slaHoursFor("Dedicated", 2, 4), 2);
+    });
+
+    test("a corporate client with no hours gets the Settings default", () => {
+      assert.equal(slaHoursFor("Corporate", null, 4), 4);
+      assert.equal(slaHoursFor("Corporate", null, 9), 9);
+      // Zero is not a commitment, so it takes the default rather than storing 0 —
+      // which a ticket would then compute a deadline from, due immediately.
+      assert.equal(slaHoursFor("Corporate", 0, 4), 4);
+      assert.equal(slaHoursFor("Corporate", 1, 4), 1);
+    });
+
+    test("the rule and the field helper agree on what a corporate client saves", () => {
+      // The two are read side by side in the action; if they disagreed the spread
+      // would write one value and the explicit line the other.
+      const corporate = corporateFieldsFor({
+        customerType: "Corporate",
+        companyName: "Agree Ltd",
+        contactPerson: "P",
+      });
+      assert.equal(slaHoursFor("Corporate", corporate.slaHours, 4), 4);
+
+      const home = corporateFieldsFor({ customerType: "Home", companyName: "Ignored" });
+      assert.equal(home.slaHours, null);
+      assert.equal(slaHoursFor("Home", home.slaHours, 4), null);
+    });
+
+    test("both save paths route slaHours through the rule", () => {
+      // The rule tests above prove `slaHoursFor` is right; they cannot prove the
+      // action *calls* it, because the action cannot be imported from a test at all
+      // (it pulls in `server-only`). So this reads the file.
+      //
+      // This is the check that catches the actual bug. A test that builds its own
+      // payload using the rule is tautological — it passes whether or not the
+      // action uses the rule, which is exactly what happened the first time round.
+      const source = readFileSync(
+        new URL("../src/app/(app)/customers/actions.ts", import.meta.url),
+        "utf8"
+      );
+
+      const assignments = [...source.matchAll(/\bslaHours:\s*([^\n]+)/g)].map((m) => m[1]);
+      assert.ok(assignments.length >= 2, "expected the create and edit paths both to set slaHours");
+      for (const expr of assignments) {
+        assert.ok(
+          expr.includes("slaHoursFor("),
+          `slaHours must be decided by slaHoursFor(), but this path writes: ${expr.trim()}`
+        );
+      }
+
+      // And specifically the pattern that caused it: `??` treats the rule's null for
+      // a Home account as "missing" and fills it with the corporate default.
+      assert.ok(
+        !/slaHours:\s*corporateFieldsFor\([^)]*\)\.slaHours\s*\?\?/.test(source),
+        "a Home customer is not missing an SLA — `?? defaultHours` on a null rule result " +
+          "gives every residential customer a 4-hour commitment they never bought"
+      );
+    });
+
+    test("a Home customer edited into Corporate picks the default up", () => {
+      // The conversion case: the company fields arrive, and so must the SLA —
+      // otherwise a corporate client exists with no deadline for its tickets.
+      assert.equal(slaHoursFor("Corporate", null, 6), 6);
+      assert.equal(slaHoursFor("Corporate", 3, 6), 3, "an explicit value still wins");
+    });
   });
 
   test("the SLA rule falls back to the default only for a corporate client", () => {

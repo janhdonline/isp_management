@@ -1488,6 +1488,17 @@ rules are a `superRefine` that runs only for those types, so the Home schema kee
 exactly the validation it had. Trade licence is recorded but **not** enforced here;
 the KYC checklist is Phase V's.
 
+**The `slaHours` rule is separate from the field helper.** Whether an account has
+an SLA is decided by the customer *type*; the Settings default only fills in what
+an SLA already exists and left unset. Written as one line —
+`slaHours: corporateFieldsFor(d).slaHours ?? defaultHours` — the `??` reads the
+rule's `null` for a residential account as "missing" and gives every Home
+customer a 4-hour commitment they never bought. Nothing breaks while every reader
+checks the type first, and the column still says something untrue; the first
+reader that trusts the column rather than the type (Phase U's tracker, a report, a
+CSV export) starts treating a home account as a contract. `slaHoursFor()` exists
+so the type check cannot be skipped by a later edit.
+
 **Tickets carry a deadline.** A corporate ticket starts at High with
 `slaDueAt = createdAt + slaHours`, defaulting to `corporate.defaultSlaHours`. Only
 a *default* Medium is raised — an operator who explicitly chose Critical is not
