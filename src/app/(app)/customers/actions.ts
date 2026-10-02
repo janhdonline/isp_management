@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { isCorporate } from "@/lib/enums";
+import { corporateFieldsFor, resolveDefaultSlaHours } from "@/lib/services/corporate";
 import { requirePermission } from "@/lib/auth";
 import { customerSchema, customerUpdateSchema, fieldErrors, FieldErrors } from "@/lib/validators";
 import { nextNumber, Tx } from "@/lib/counter";
@@ -79,6 +81,13 @@ export async function createCustomerAction(
         areaId: d.areaId || null,
         resellerId: d.resellerId || null,
         customerType: d.customerType,
+        // Corporate fields (Phase J). Null on a Home account rather than "", so
+        // "not a corporate client" stays a fact rather than an empty string that
+        // somebody later has to interpret. The SLA falls back to the Settings
+        // default so every corporate client has a deadline — a ticket with no
+        // slaDueAt gives the SLA tracker (Phase U) nothing to measure against.
+        ...corporateFieldsFor(d),
+        slaHours: corporateFieldsFor(d).slaHours ?? resolveDefaultSlaHours((await getSettings())["corporate.defaultSlaHours"]),
         photoUrl: d.photoUrl,
         username: d.username,
         password: d.password || undefined,
@@ -251,11 +260,24 @@ export async function updateCustomerAction(
         routerId: d.routerId === "" ? null : (d.routerId ?? undefined),
         oltId: d.oltId === "" ? null : (d.oltId ?? undefined),
         onuId: d.onuId === "" ? null : (d.onuId ?? undefined),
+        // Corporate fields on edit too, so a Home account converted to Corporate
+        // gets them and a Corporate account converted back has them cleared. The
+        // `corporateFields` helper makes that symmetric, which a spread of
+        // individual `?? undefined` assignments would not.
+        ...corporateFieldsFor(d),
+        slaHours: corporateFieldsFor(d).slaHours ?? resolveDefaultSlaHours((await getSettings())["corporate.defaultSlaHours"]),
       },
     });
     await prismaLog(
       tx,
-      { action: "Update", entity: "Customer", entityId: id, summary: "Customer details updated" },
+      {
+        action: "Update",
+        entity: "Customer",
+        entityId: id,
+        summary: isCorporate(d.customerType)
+          ? "Customer details updated — corporate account"
+          : "Customer details updated",
+      },
       session.id
     );
   });

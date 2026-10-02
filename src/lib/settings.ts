@@ -108,6 +108,12 @@ export const DEFAULT_SETTINGS: {
   // listener above: that is where this server accepts CoA, this is where it
   // sends it. RFC 5176 puts the NAS side on 3799.
   { key: "network.nasCoaPort", value: "3799", group: "Network" },
+  /// Corporate clients (Phase J): the response time committed to a corporate or
+  /// dedicated account when one is created. Four hours is the usual first offer in
+  /// this market — long enough to be honest about a visit, short enough to be
+  /// worth paying for.
+  { key: "corporate.defaultSlaHours", value: "4", group: "Billing" },
+
   /// Device-down alerts (Phase I).
   ///
   /// Which channel an outage page goes out on. Telegram first: it is the only one

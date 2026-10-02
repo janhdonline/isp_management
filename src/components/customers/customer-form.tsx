@@ -8,7 +8,7 @@ import { Field, Input, Select, Textarea, FormSection } from "@/components/ui/inp
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/card";
 import { AlertCircle, CheckCircle2, Contact, Network, Wallet } from "lucide-react";
-import { CONNECTION_TYPES, CUSTOMER_TYPES, GENDERS, IP_TYPES } from "@/lib/enums";
+import { CONNECTION_TYPES, CUSTOMER_TYPES, GENDERS, IP_TYPES, isCorporate } from "@/lib/enums";
 import { addDays, round2 } from "@/lib/utils";
 
 export type Option = { id: string; name: string };
@@ -28,6 +28,14 @@ export type CustomerFormDefaults = {
   areaId?: string;
   resellerId?: string | null;
   customerType?: string;
+  companyName?: string | null;
+  contactPerson?: string | null;
+  contactPhone?: string | null;
+  tradeLicenseNo?: string | null;
+  cirMbps?: number | null;
+  mirMbps?: number | null;
+  slaHours?: number | null;
+  billingLabel?: string | null;
   photoUrl?: string;
   username?: string;
   password?: string;
@@ -103,6 +111,7 @@ export function CustomerForm({
   defaults,
   isEdit,
   action,
+  defaultSlaHours = 4,
 }: {
   areas: (Option & { zone?: string | null })[];
   /** Optional: a customer with no reseller is the common case. */
@@ -112,11 +121,15 @@ export function CustomerForm({
   olts: Option[];
   defaults: CustomerFormDefaults;
   isEdit: boolean;
+  /** Read from Settings; the placeholder for a client with no own SLA. */
+  defaultSlaHours?: number;
   action: (prev: FormState, formData: FormData) => Promise<FormState>;
 }) {
   const [state, formAction] = useActionState(action, {} as FormState);
 
   const [packageId, setPackageId] = useState(defaults.packageId ?? packages[0]?.id ?? "");
+  const [customerType, setCustomerType] = useState(defaults.customerType ?? "Home");
+  const corporate = isCorporate(customerType);
   const [ipType, setIpType] = useState(defaults.ipType ?? "Dynamic");
   const [connectionDate, setConnectionDate] = useState(
     defaults.connectionDate ? defaults.connectionDate.slice(0, 10) : new Date().toISOString().slice(0, 10)
@@ -197,9 +210,74 @@ export function CustomerForm({
                 options={areas.map((a) => ({ value: a.id, label: a.zone ? `${a.name} (${a.zone})` : a.name }))}
               />
             </Field>
-            <Field label="Customer Type">
-              <Select name="customerType" defaultValue={defaults.customerType ?? "Home"} options={CUSTOMER_TYPES.map((c) => ({ value: c, label: c }))} />
+            <Field
+              label="Customer Type"
+              hint="Corporate and dedicated accounts bill to a company and carry a response-time commitment."
+            >
+              <Select
+                name="customerType"
+                value={customerType}
+                onChange={(e) => setCustomerType(e.target.value)}
+                options={CUSTOMER_TYPES.map((c) => ({ value: c, label: c }))}
+              />
             </Field>
+
+            {corporate ? (
+              // Revealed rather than always visible: a Home customer must see
+              // exactly the form they saw before, and a fieldset of company fields
+              // they cannot fill in is just noise on every customer.
+              <div className="sm:col-span-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3">
+                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-fg-subtle">
+                  Company details
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Company name" required error={setField("companyName")}>
+                    <Input name="companyName" defaultValue={defaults.companyName ?? ""} placeholder="Acme Trading Ltd" invalid={!!setField("companyName")} />
+                  </Field>
+                  <Field label="Contact person" required error={setField("contactPerson")}>
+                    <Input name="contactPerson" defaultValue={defaults.contactPerson ?? ""} placeholder="R. Khan" invalid={!!setField("contactPerson")} />
+                  </Field>
+                  <Field label="Contact phone" error={setField("contactPhone")}>
+                    <Input name="contactPhone" defaultValue={defaults.contactPhone ?? ""} placeholder="017…" />
+                  </Field>
+                  <Field
+                    label="Trade licence"
+                    error={setField("tradeLicenseNo")}
+                    hint="Recorded here; the KYC checklist in Phase V is what enforces it."
+                  >
+                    <Input name="tradeLicenseNo" defaultValue={defaults.tradeLicenseNo ?? ""} />
+                  </Field>
+                  <Field
+                    label="CIR (Mbps)"
+                    error={setField("cirMbps")}
+                    hint="Committed Information Rate — what the contract guarantees."
+                  >
+                    <Input name="cirMbps" type="number" step="0.1" min={0} defaultValue={defaults.cirMbps ?? ""} />
+                  </Field>
+                  <Field
+                    label="MIR (Mbps)"
+                    error={setField("mirMbps")}
+                    hint="Maximum Information Rate — the most the pipe could deliver."
+                  >
+                    <Input name="mirMbps" type="number" step="0.1" min={0} defaultValue={defaults.mirMbps ?? ""} />
+                  </Field>
+                  <Field
+                    label="SLA response (hours)"
+                    error={setField("slaHours")}
+                    hint={`Blank uses the ${defaultSlaHours}-hour default from Settings.`}
+                  >
+                    <Input name="slaHours" type="number" min={1} step={1} defaultValue={defaults.slaHours ?? ""} placeholder={String(defaultSlaHours)} />
+                  </Field>
+                  <Field
+                    label="Billing label"
+                    error={setField("billingLabel")}
+                    hint="What the invoice should say it is for, when it is for the company rather than the person paying."
+                  >
+                    <Input name="billingLabel" defaultValue={defaults.billingLabel ?? ""} placeholder="Acme Trading Ltd — monthly connectivity" />
+                  </Field>
+                </div>
+              </div>
+            ) : null}
             <Field
               label="Reseller"
               error={setField("resellerId")}

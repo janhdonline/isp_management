@@ -4,6 +4,8 @@ import {
   attendanceReportData,
   billingReport,
   collectionReport,
+  corporateReport,
+  corporateCollectionReport,
   customerReport,
   defaultRange,
   dueReport,
@@ -18,6 +20,8 @@ import {
   CustomerReport,
   BillingReport,
   CollectionReport,
+  CorporateReport,
+  CorporateCollectionReport,
   DueReport,
   ExpenseReport,
   ProfitAndLoss,
@@ -84,6 +88,12 @@ export default async function ReportsPage({
     case "collection":
       body = <CollectionReport data={await collectionReport(range)} />;
       break;
+    case "corporate":
+      body = <CorporateReport data={await corporateReport()} />;
+      break;
+    case "corporate-collection":
+      body = <CorporateCollectionReport data={await corporateCollectionReport(range)} />;
+      break;
     case "due":
       body = <DueReport data={await dueReport()} />;
       break;
@@ -115,7 +125,7 @@ export default async function ReportsPage({
 
   // BTRC is filed per calendar month, so the header describes the month the tab
   // actually shows rather than the arbitrary from/to range the other tabs use.
-  const periodScoped = !["due", "network", "btrc"].includes(tab);
+  const periodScoped = !["due", "network", "btrc", "corporate"].includes(tab);
 
   return (
     <>

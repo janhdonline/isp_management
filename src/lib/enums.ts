@@ -122,7 +122,32 @@ export const DEVICE_STATUSES = ["Online", "Offline", "Low Signal", "Unknown"] as
 
 export const BILLING_CYCLES = ["Weekly", "Bi-weekly", "Monthly", "Quarterly", "Yearly"] as const;
 
-export const CUSTOMER_TYPES = ["Home", "Business", "Corporate", "Bulk", "Free"] as const;
+export const CUSTOMER_TYPES = [
+  "Home",
+  "Business",
+  "Corporate",
+  // A dedicated circuit — a client on their own link with a CIR contract. Behaves
+  // exactly like Corporate for SLA and support purposes; the distinction is
+  // commercial (what is on the invoice), not operational.
+  "Dedicated",
+  "Bulk",
+  "Free",
+] as const;
+
+/**
+ * The account types that carry a contract, and so a company identity, a CIR and a
+ * response-time commitment.
+ *
+ * A separate list rather than a test against CUSTOMER_TYPES, because "is this a
+ * corporate account" is a question asked in several places — ticket creation, the
+ * invoice header, the receivables report — and each of them should answer it the
+ * same way.
+ */
+export const CORPORATE_TYPES = ["Corporate", "Dedicated"] as const;
+
+export function isCorporate(customerType: string | null | undefined): boolean {
+  return CORPORATE_TYPES.includes(customerType as (typeof CORPORATE_TYPES)[number]);
+}
 
 export const CONNECTION_TYPES = ["PPPoE", "Static IP", "DHCP", "Hotspot", "Leased Line"] as const;
 

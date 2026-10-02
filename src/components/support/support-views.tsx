@@ -34,6 +34,9 @@ export type TicketRow = {
   priority: string;
   status: string;
   createdAt: Date;
+  /** Contract response time for a corporate client; null for a home customer. */
+  slaDueAt: Date | null;
+  escalated: boolean;
   customer: { id: string; name: string; username: string; customerCode: string } | null;
   technician: { id: string; name: string } | null;
   area: { id: string; name: string } | null;
@@ -104,7 +107,34 @@ export function TicketsTable({
       cell: (t) => <Badge>{t.category}</Badge>,
       exportValue: (t) => t.category,
     },
-    { key: "priority", header: "Priority", cell: (t) => <StatusBadge status={t.priority} />, exportValue: (t) => t.priority },
+    {
+      key: "priority",
+      header: "Priority",
+      cell: (t) => (
+        <span className="flex items-center gap-1.5">
+          <StatusBadge status={t.priority} />
+          {t.escalated ? (
+            // The flag a collections or account manager needs: a contractual
+            // response time has passed and the ticket is still open. Priority
+            // alone does not say that — a corporate ticket is High from the start.
+            <span
+              className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-700 dark:bg-red-950/60 dark:text-red-300"
+              title={t.slaDueAt ? `SLA was due ${formatDateTime(t.slaDueAt)}` : "SLA breached"}
+            >
+              SLA breached
+            </span>
+          ) : t.slaDueAt ? (
+            <span
+              className="hidden text-[10px] text-fg-subtle lg:inline"
+              title="Contractual response time"
+            >
+              due {formatDate(t.slaDueAt)}
+            </span>
+          ) : null}
+        </span>
+      ),
+      exportValue: (t) => (t.escalated ? `${t.priority} (SLA breached)` : t.priority),
+    },
     {
       key: "technician",
       header: "Technician",

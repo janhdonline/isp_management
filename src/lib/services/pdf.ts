@@ -2,6 +2,7 @@ import PDFDocument from "pdfkit";
 import { prisma } from "@/lib/prisma";
 import { getSettings } from "@/lib/settings";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { isCorporate } from "@/lib/enums";
 
 /**
  * Renders an invoice or a receipt to a real PDF file, rather than asking the
@@ -107,8 +108,22 @@ export async function invoicePdf(invoiceId: string): Promise<{ buffer: Buffer; f
 
   const top = header(doc, company, "INVOICE", invoice.invoiceNumber);
 
+  // Corporate accounts bill to a company, not to the person who pays it. The
+  // company name leads, the billing label says what the money is for, and the
+  // account contact stays underneath so somebody can actually ask about it. A Home
+  // customer renders exactly what it always did.
+  const corporate = isCorporate(invoice.customer.customerType);
+  const billedTo: [string, string][] = corporate
+    ? [
+        ["Company", invoice.customer.companyName ?? invoice.customer.name],
+        ...(invoice.customer.billingLabel ? [["Invoice for", invoice.customer.billingLabel] as [string, string]] : []),
+        ["Account", invoice.customer.name],
+        ["Contact", invoice.customer.contactPerson ?? "—"],
+      ]
+    : [["Billed to", invoice.customer.name]];
+
   const leftTop = fieldBlock(doc, PAGE.margin, top, 220, [
-    ["Billed to", invoice.customer.name],
+    ...billedTo,
     ["Username", invoice.customer.username],
     ["Phone", invoice.customer.phone],
     ["Address", invoice.customer.address || "—"],

@@ -1465,6 +1465,53 @@ when nothing is wrong, because a banner that is always there gets ignored.
 
 ------------------------------------------------------------------------
 
+## 33. Corporate / Dedicated Clients
+
+`Customer.customerType` existed and was otherwise unused: a company paying for a
+CIR contract was treated exactly like a home user. This makes those accounts
+first-class, and leaves the residential flow alone.
+
+**The company columns are all nullable.** A Home customer has `null`, not empty
+strings — "this is a home account with no company" is not the same statement as
+"this is a home account", and only the second is ever asked. No new required
+field, no changed default, no behaviour difference: the phase is additive or it is
+nothing.
+
+**CIR and MIR are both stored**, because the gap between them is the whole
+commercial point of a contract. CIR is what the operator guarantees; MIR is what
+the pipe could physically do. A report showing only one cannot answer "is this
+client served as sold".
+
+**Validation is conditional.** Corporate and Dedicated require a company name and
+a contact person — there is no name to put on an invoice, and nobody to call. The
+rules are a `superRefine` that runs only for those types, so the Home schema keeps
+exactly the validation it had. Trade licence is recorded but **not** enforced here;
+the KYC checklist is Phase V's.
+
+**Tickets carry a deadline.** A corporate ticket starts at High with
+`slaDueAt = createdAt + slaHours`, defaulting to `corporate.defaultSlaHours`. Only
+a *default* Medium is raised — an operator who explicitly chose Critical is not
+overruled. `slaEscalate()` flags anything past its deadline when the queue is
+read, so a ticket that sat open overnight is noticed without a job, and closing
+it clears the flag: a ticket closed after breaching was late, but it is not an open
+escalation. Phase U reads these two fields; nothing here computes compliance.
+
+**Invoices bill to the company.** The company name leads, the billing label says
+what the money is for, and the account contact stays underneath so somebody can
+still be asked. A Home invoice renders exactly what it did before.
+
+**Two reports.** Network client list with CIR/MIR, headroom, static IPs and SLA
+hours; and a Corporate receivables report. Both reconcile against
+`previousDue` — the same field the dashboard and the suspension sweep read — so
+there is no third number to argue about.
+
+**SLA compliance is reported as "pending Phase U",** not as a percentage. There is
+no resolution data to measure against, and a compliance figure derived from
+whatever happens to be available would be a number in front of an operator that
+means nothing.
+
+------------------------------------------------------------------------
+
 ## Final Requirement
 
 The final UI must feel like **one unified ISP operating system**, not

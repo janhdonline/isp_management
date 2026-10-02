@@ -854,6 +854,29 @@ console.log("\nPer-customer usage (Phase H)");
   check("the cron route runs the usage job", cronResults?.usage !== undefined, JSON.stringify(cronResults ?? {}));
 }
 
+/* ---------------------------------------------------------------- */
+console.log("\nCorporate clients (Phase J)");
+{
+  const clients = await api("/reports?tab=corporate");
+  check("the corporate client list renders", clients.status === 200, `got ${clients.status}`);
+  const html = typeof clients.body === "string" ? clients.body : "";
+  check("it shows the contracted rates", /CIR \/ MIR/.test(html));
+  check(
+    "it does not invent an SLA compliance figure",
+    /pending Phase U/.test(html),
+    "Phase U owns SLA tracking; a percentage here would mean nothing"
+  );
+
+  const receivables = await api("/reports?tab=corporate-collection");
+  check("the corporate receivables report renders", receivables.status === 200, `got ${receivables.status}`);
+
+  // The Home path must still be the Home path: a residential customer with money
+  // owed is not a corporate receivable.
+  const newForm = await api("/customers/new");
+  const formHtml = typeof newForm.body === "string" ? newForm.body : "";
+  check("the customer form still renders for everyone", newForm.status === 200 && /Customer Type/i.test(formHtml));
+}
+
 console.log(`\n${"─".repeat(46)}`);
 console.log(`  ${pass} passed, ${fail} failed`);
 console.log(`${"─".repeat(46)}\n`);

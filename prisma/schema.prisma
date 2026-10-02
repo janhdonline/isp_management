@@ -200,6 +200,31 @@ model Customer {
   areaId            String?
   area              Area?     @relation(fields: [areaId], references: [id], onDelete: SetNull)
   customerType      String    @default("Home")
+
+  // Corporate and dedicated clients (ISP.md §33).
+  //
+  // Nullable rather than defaulted, so a Home customer has null here rather than
+  // empty strings — "this is a home account with no company" is not the same
+  // statement as "this is a home account", and only the second is ever asked.
+  //
+  // `cirMbps` is the committed information rate: what the contract guarantees.
+  // `mirMbps` the maximum: what the pipe could physically do. The gap between
+  // them is the whole commercial point of a CIR contract, and a report showing
+  // only one of them cannot answer "is this client served as sold".
+  companyName      String?
+  contactPerson    String?
+  contactPhone     String?
+  /// Recorded here; the KYC checklist (Phase V) is what enforces it, not this field.
+  tradeLicenseNo   String?
+  cirMbps          Float?
+  mirMbps          Float?
+  /// Response-time commitment in hours, defaulted from Settings when the client is
+  /// created. Tickets opened against this customer get `slaDueAt` from it.
+  slaHours         Int?
+  /// What the invoice says it is for, when the bill is for the company rather than
+  /// the person who pays it.
+  billingLabel     String?
+
   photoUrl          String?
 
   // Connection information
@@ -626,6 +651,16 @@ model Ticket {
   description  String?
   category     String    @default("Other")
   priority     String    @default("Medium") // Low | Medium | High | Critical
+  /// When a corporate client's contractual response time runs out. Set at creation
+  /// from the customer's `slaHours`, and read by the SLA tracker (Phase U). Null
+  /// for a home customer, which has no contract and therefore no deadline.
+  slaDueAt     DateTime?
+  /// True once `slaDueAt` has passed and the ticket is still open.
+  ///
+  /// Stored rather than derived from `slaDueAt` alone, because "overdue" is a
+  /// fact about a moment — a ticket closed after breaching was not escalated, and
+  /// recomputing it from the timestamp would call it so for ever after.
+  escalated    Boolean   @default(false)
   status       String    @default("Open") // Open | Pending | In Progress | Resolved | Closed
   technicianId String?
   technician   Employee? @relation(fields: [technicianId], references: [id], onDelete: SetNull)
@@ -641,6 +676,8 @@ model Ticket {
   @@index([status])
   @@index([priority])
   @@index([technicianId])
+  @@index([escalated])
+  @@index([slaDueAt])
 }
 
 model TicketComment {

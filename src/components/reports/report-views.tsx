@@ -37,6 +37,8 @@ export function ReportShell({
     { value: "pnl", label: "Profit & Loss", href: "/reports?tab=pnl" },
     { value: "network", label: "Network", href: "/reports?tab=network" },
     { value: "attendance", label: "Attendance", href: "/reports?tab=attendance" },
+    { value: "corporate", label: "Corporate", href: "/reports?tab=corporate" },
+    { value: "corporate-collection", label: "Corp. Receivables", href: "/reports?tab=corporate-collection" },
     { value: "btrc", label: "BTRC", href: "/reports?tab=btrc" },
   ];
 
@@ -775,6 +777,236 @@ function Line({ label, value, bold }: { label: string; value: string; bold?: boo
     <div className="flex items-center justify-between gap-3">
       <span className="text-fg-muted">{label}</span>
       <span className={`tabular-nums ${bold ? "font-semibold" : ""}`}>{value}</span>
+    </div>
+  );
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Corporate clients (ISP.md §33)                                       */
+/* ------------------------------------------------------------------ */
+
+export type CorporateData = {
+  rows: {
+    id: string;
+    customerCode: string;
+    name: string;
+    username: string;
+    customerType: string;
+    companyName: string | null;
+    contactPerson: string | null;
+    contactPhone: string | null;
+    tradeLicenseNo: string | null;
+    cirMbps: number | null;
+    mirMbps: number | null;
+    headroomMbps: number | null;
+    slaHours: number | null;
+    billingLabel: string | null;
+    ipAddress: string | null;
+    ipType: string | null;
+    connectionStatus: string;
+    previousDue: number;
+    monthlyBill: number;
+    package: { name: string; downloadSpeed: number; uploadSpeed: number } | null;
+    area: { name: string } | null;
+    router: { name: string } | null;
+  }[];
+  metrics: {
+    clients: number;
+    totalReceivables: number;
+    totalMonthly: number;
+    missingCompany: number;
+    withCir: number;
+    /** Always null until Phase U exists; the column says so rather than guessing. */
+    slaCompliance: number | null;
+    slaComplianceNote: string;
+  };
+};
+
+/**
+ * Every corporate and dedicated client, with what they were sold and what they owe.
+ *
+ * The SLA column reads "pending Phase U" rather than a percentage. There is no
+ * resolution data to compute one from, and a compliance figure derived from
+ * whatever happens to be available would be a number in front of an operator that
+ * means nothing — worse than the admission that it is not measured yet.
+ */
+export function CorporateReport({ data }: { data: CorporateData }) {
+  const columns: Column<CorporateData["rows"][number]>[] = [
+    {
+      key: "company",
+      header: "Company",
+      cell: (r) => (
+        <span className="min-w-0">
+          <span className="block truncate text-xs font-medium">{r.companyName ?? "—"}</span>
+          <span className="block truncate text-[11px] text-fg-subtle">{r.name}</span>
+        </span>
+      ),
+      exportValue: (r) => r.companyName ?? r.name,
+    },
+    { key: "type", header: "Type", cell: (r) => <Badge>{r.customerType}</Badge>, exportValue: (r) => r.customerType },
+    {
+      key: "cir",
+      header: "CIR / MIR",
+      align: "right",
+      cell: (r) => (
+        <span className="tnum whitespace-nowrap text-xs">
+          {r.cirMbps ?? "—"} / {r.mirMbps ?? "—"}
+          {r.headroomMbps != null ? (
+            <span className="ml-1 text-[11px] text-fg-subtle">(+{r.headroomMbps})</span>
+          ) : null}
+        </span>
+      ),
+      exportValue: (r) => `${r.cirMbps ?? ""} / ${r.mirMbps ?? ""}`,
+    },
+    {
+      key: "ip",
+      header: "IP",
+      hideBelow: "md",
+      cell: (r) => (
+        <span className="font-mono text-[11px] text-fg-muted">{r.ipAddress ?? `${r.ipType ?? "—"}`}</span>
+      ),
+      exportValue: (r) => r.ipAddress ?? r.ipType ?? "",
+    },
+    { key: "sla", header: "SLA", align: "right", cell: (r) => <span className="tnum text-xs">{r.slaHours ? `${r.slaHours}h` : "—"}</span>, exportValue: (r) => (r.slaHours ? `${r.slaHours}h` : "") },
+    {
+      key: "status",
+      header: "Status",
+      cell: (r) => <StatusBadge status={r.connectionStatus} />,
+      exportValue: (r) => r.connectionStatus,
+    },
+    {
+      key: "due",
+      header: "Receivables",
+      align: "right",
+      cell: (r) => <span className="tnum text-xs font-semibold">{formatCurrency(r.previousDue)}</span>,
+      exportValue: (r) => r.previousDue,
+    },
+    {
+      key: "slaCompliance",
+      header: "SLA compliance",
+      align: "right",
+      hideBelow: "lg",
+      // Said plainly rather than showing a percentage that means nothing.
+      cell: () => <span className="text-[11px] text-fg-subtle">pending Phase U</span>,
+      exportValue: () => "pending Phase U",
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+        <StatCard label="Corporate clients" value={formatNumber(data.metrics.clients)} tone="brand" />
+        <StatCard label="Receivables" value={formatCurrency(data.metrics.totalReceivables)} tone="warning" />
+        <StatCard label="Monthly contract value" value={formatCurrency(data.metrics.totalMonthly)} tone="info" />
+        <StatCard
+          label="With a CIR"
+          value={formatNumber(data.metrics.withCir)}
+          tone="neutral"
+          hint={data.metrics.missingCompany > 0 ? `${data.metrics.missingCompany} missing a company name` : undefined}
+        />
+      </div>
+
+      <DataTableShell
+        columns={columns}
+        rows={data.rows}
+        rowKey={(r) => r.id}
+        compact
+        toolbar={<TableToolbar searchPlaceholder="Search company, contact, code..." actions={<ExportCsvButton columns={columns} rows={data.rows} filename="corporate-clients" />} />}
+        empty={
+          <EmptyState
+            title="No corporate clients"
+            description="A customer with a type of Corporate or Dedicated appears here with their CIR, MIR and SLA."
+          />
+        }
+      />
+    </div>
+  );
+}
+
+export type CorporateCollectionData = {
+  rows: {
+    id: string;
+    customerCode: string;
+    name: string;
+    companyName: string | null;
+    customerType: string;
+    cirMbps: number | null;
+    mirMbps: number | null;
+    previousDue: number;
+    collected: number;
+    billingStatus: string;
+  }[];
+  metrics: {
+    clients: number;
+    totalReceivables: number;
+    totalCollected: number;
+    debtors: number;
+  };
+};
+
+/**
+ * Receivables by corporate client.
+ *
+ * Separate from the customer list because the questions differ: one is "who are
+ * our corporate clients and what are they sold?", the other is "who owes us
+ * money?". A corporate debtor is a collections conversation, not a support one.
+ */
+export function CorporateCollectionReport({ data }: { data: CorporateCollectionData }) {
+  const columns: Column<CorporateCollectionData["rows"][number]>[] = [
+    {
+      key: "company",
+      header: "Company",
+      cell: (r) => (
+        <span className="min-w-0">
+          <span className="block truncate text-xs font-medium">{r.companyName ?? "—"}</span>
+          <span className="block truncate text-[11px] text-fg-subtle">{r.name}</span>
+        </span>
+      ),
+      exportValue: (r) => r.companyName ?? r.name,
+    },
+    { key: "code", header: "Code", hideBelow: "md", cell: (r) => <span className="font-mono text-[11px] text-fg-muted">{r.customerCode}</span>, exportValue: (r) => r.customerCode },
+    {
+      key: "cir",
+      header: "CIR / MIR",
+      align: "right",
+      cell: (r) => <span className="tnum whitespace-nowrap text-xs">{r.cirMbps ?? "—"} / {r.mirMbps ?? "—"}</span>,
+      exportValue: (r) => `${r.cirMbps ?? ""} / ${r.mirMbps ?? ""}`,
+    },
+    { key: "status", header: "Status", cell: (r) => <StatusBadge status={r.billingStatus} />, exportValue: (r) => r.billingStatus },
+    {
+      key: "collected",
+      header: "Collected",
+      align: "right",
+      cell: (r) => <span className="tnum text-xs">{formatCurrency(r.collected)}</span>,
+      exportValue: (r) => r.collected,
+    },
+    {
+      key: "due",
+      header: "Receivables",
+      align: "right",
+      cell: (r) => <span className="tnum text-xs font-semibold">{formatCurrency(r.previousDue)}</span>,
+      exportValue: (r) => r.previousDue,
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+        <StatCard label="Corporate clients" value={formatNumber(data.metrics.clients)} tone="brand" />
+        <StatCard label="Receivables" value={formatCurrency(data.metrics.totalReceivables)} tone="warning" />
+        <StatCard label="Collected in range" value={formatCurrency(data.metrics.totalCollected)} tone="success" />
+        <StatCard label="In arrears" value={formatNumber(data.metrics.debtors)} tone={data.metrics.debtors ? "danger" : "neutral"} />
+      </div>
+
+      <DataTableShell
+        columns={columns}
+        rows={data.rows}
+        rowKey={(r) => r.id}
+        compact
+        toolbar={<TableToolbar searchPlaceholder="Search company, code..." actions={<ExportCsvButton columns={columns} rows={data.rows} filename="corporate-receivables" />} />}
+        empty={<EmptyState title="Nothing owed" description="No corporate client has a balance on the account." />}
+      />
     </div>
   );
 }

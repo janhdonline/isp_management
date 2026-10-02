@@ -35,6 +35,42 @@ export type TicketRow = {
   _count: { comments: number };
 };
 
+/**
+ * Flags open tickets whose SLA deadline has passed, and un-flags any that no
+ * longer warrant it.
+ *
+ * Idempotent and cheap: one update per direction, run when the queue is read.
+ */
+/** The statuses a ticket is still "outstanding" in. */
+const OPEN_TICKET_STATUSES = ["Open", "Pending", "In Progress"];
+
+export async function slaEscalate(now: Date = new Date()): Promise<number> {
+  const escalated = await prisma.ticket.updateMany({
+    where: {
+      status: { in: OPEN_TICKET_STATUSES },
+      slaDueAt: { not: null, lte: now },
+      escalated: false,
+    },
+    data: { escalated: true },
+  });
+  // Clear the flag once it no longer describes anything outstanding: the ticket
+  // is closed, has no deadline, or is still inside its deadline. A ticket closed
+  // *after* breaching was late, but it is not an open escalation — leaving it
+  // flagged would keep a resolved incident in the queue for ever.
+  await prisma.ticket.updateMany({
+    where: {
+      escalated: true,
+      OR: [
+        { status: { notIn: OPEN_TICKET_STATUSES } },
+        { slaDueAt: null },
+        { slaDueAt: { gt: now } },
+      ],
+    },
+    data: { escalated: false },
+  });
+  return escalated.count;
+}
+
 export async function listTickets(p: ListParams = {}): Promise<ListResult<TicketRow>> {
   const page = Math.max(1, p.page ?? 1);
   const perPage = p.perPage ?? DEFAULT_PER_PAGE;
@@ -68,6 +104,15 @@ export async function listTickets(p: ListParams = {}): Promise<ListResult<Ticket
   }
 
   const where: Prisma.TicketWhereInput = and.length ? { AND: and } : {};
+
+  // Mark anything whose contractual response time has already run out. Done here
+  // rather than at insert so a ticket that sat open overnight is flagged by the
+  // next person who opens the queue, without needing a job to notice.
+  //
+  // Only open tickets, and the flag is cleared by `slaEscalate()` when a ticket
+  // closes — recomputing "overdue" from the timestamp alone would call a ticket
+  // closed after breaching escalated for ever.
+  await slaEscalate();
 
   const [total, rows, byStatus, byPriority] = await Promise.all([
     prisma.ticket.count({ where }),

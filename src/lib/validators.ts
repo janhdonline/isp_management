@@ -6,6 +6,7 @@ import {
   GENDERS,
   IP_TYPES,
   PAYMENT_METHODS,
+  isCorporate,
 } from "@/lib/enums";
 
 const required = (label: string) => z.string().trim().min(1, `${label} is required`);
@@ -55,6 +56,67 @@ const num = (label: string) =>
 
 const dateStr = z.coerce.date({ message: "Enter a valid date" });
 
+/**
+ * A number that a blank form field turns into `null` rather than 0.
+ *
+ * `z.coerce.number()` coerces "" to 0, which is never what a blank field means.
+ * For an optional rate that is a zero-speed contract; for an optional hour count
+ * it trips a `.min(1)` and rejects the form — including on the Home form, where
+ * these fields are present but unfilled. Both are silent breakage of the
+ * residential path, which is the thing this is here to prevent.
+ */
+const nullableNumber = (label: string, min: number) =>
+  z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : v),
+    (min === 1
+      ? z.coerce.number({ message: `${label} must be a number` }).int()
+      : z.coerce.number({ message: `${label} must be a number` })
+    )
+      .min(min, `${label} cannot be less than ${min}`)
+      .nullable()
+  );
+
+/**
+ * The corporate-only rules, applied only to corporate accounts.
+ *
+ * A `superRefine` on the shared object rather than a second schema, so the Home
+ * flow keeps exactly the validation it had. Without this, a corporate account
+ * could be created with no company name — and then there is no name to put on an
+ * invoice, no name on a ticket, and nothing to report receivables against.
+ *
+ * CIR is checked against MIR where both are given: a committed rate above the
+ * maximum is a contract nobody can deliver, and catching it at entry is the only
+ * time anyone reads the form.
+ */
+const corporateRefinements = (
+  data: { customerType?: string; companyName?: string; contactPerson?: string; cirMbps?: number | null; mirMbps?: number | null },
+  ctx: z.RefinementCtx
+) => {
+  if (!isCorporate(data.customerType)) return;
+  if (!data.companyName) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["companyName"],
+      message: "A corporate account needs the company name it bills under",
+    });
+  }
+  if (!data.contactPerson) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["contactPerson"],
+      message: "A corporate account needs somebody to call",
+    });
+  }
+  const { cirMbps, mirMbps } = data;
+  if (cirMbps != null && mirMbps != null && cirMbps > mirMbps) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["cirMbps"],
+      message: `The committed rate cannot exceed the maximum (${cirMbps} > ${mirMbps} Mbps)`,
+    });
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Customer
 // ---------------------------------------------------------------------------
@@ -86,6 +148,26 @@ const customerBase = z.object({
     areaId: z.string().trim().optional().or(z.literal("")),
     customerType: z.enum(CUSTOMER_TYPES).default("Home"),
     photoUrl: optionalText(500),
+
+    // Corporate / dedicated (Phase J).
+    //
+    // All optional at the schema level so the Home form is untouched — a new
+    // required field on the shared object would break every existing customer
+    // save, which is exactly the "no behaviour change to Home" rule. The
+    // conditional requirement is applied in `corporateRefinements` below, only
+    // when the type says this is a corporate account.
+    companyName: optionalText(160),
+    contactPerson: optionalText(120),
+    contactPhone: z.string().trim().max(30).optional().or(z.literal("")),
+    tradeLicenseNo: optionalText(60),
+    // Blanks must become null, not 0. `z.coerce.number()` turns "" into 0, which
+    // would store a zero-speed CIR on a corporate client and fail `.min(1)` on a
+    // blank SLA — and that failure is on the *Home* form too, where a blank SLA
+    // field is simply a field nobody filled in.
+    cirMbps: nullableNumber("CIR", 0),
+    mirMbps: nullableNumber("MIR", 0),
+    slaHours: nullableNumber("SLA", 1),
+    billingLabel: optionalText(160),
 
     // connection
     username: z
@@ -133,14 +215,17 @@ function validateDates(
   }
 }
 
-export const customerSchema = customerBase.superRefine(validateDates);
+export const customerSchema = customerBase
+  .superRefine(validateDates)
+  .superRefine(corporateRefinements);
 
 export type CustomerInput = z.infer<typeof customerSchema>;
 
 export const customerUpdateSchema = customerBase
   .partial()
   .extend({ id: required("Customer id") })
-  .superRefine(validateDates);
+  .superRefine(validateDates)
+  .superRefine(corporateRefinements);
 
 // ---------------------------------------------------------------------------
 // Package

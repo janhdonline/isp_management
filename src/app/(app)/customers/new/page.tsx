@@ -59,6 +59,7 @@ export default async function NewCustomerPage() {
           routers={routers.map((r) => ({ id: r.id, name: r.name }))}
           olts={olts.map((o) => ({ id: o.id, name: o.name }))}
           defaults={{ customerType: "Home", connectionType: "PPPoE", ipType: "Dynamic" }}
+          defaultSlaHours={Number(settings["corporate.defaultSlaHours"]) || 4}
           isEdit={false}
           action={createCustomerAction}
         />

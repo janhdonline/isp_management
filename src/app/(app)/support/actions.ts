@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { getSettings } from "@/lib/settings";
+import { slaTermsFor, resolveDefaultSlaHours } from "@/lib/services/corporate";
 import { type Prisma } from "@/generated/prisma/client";
 import { requirePermission } from "@/lib/auth";
 import { nextNumber, type Tx } from "@/lib/counter";
@@ -52,6 +54,17 @@ export async function createTicketAction(_prev: ActionState, formData: FormData)
     ? await prisma.customer.findUnique({ where: { id: d.customerId } })
     : null;
 
+  // Corporate and dedicated accounts carry a contracted response time, so a ticket
+  // against one starts at High with a deadline attached. A Home customer is
+  // untouched: same priority the form asked for, no deadline, nothing to escalate.
+  // The rule lives in a service so it can be tested — a server action module
+  // cannot be imported from a test at all.
+  const sla = slaTermsFor(
+    customer,
+    d.priority,
+    resolveDefaultSlaHours((await getSettings())["corporate.defaultSlaHours"])
+  );
+
   const ticket = await prisma.$transaction(async (tx) => {
     const ticketNumber = await nextNumber(tx, "ticket", "TKT-");
     const created = await tx.ticket.create({
@@ -64,10 +77,14 @@ export async function createTicketAction(_prev: ActionState, formData: FormData)
         problem: d.category,
         category: d.category,
         description: d.description || null,
-        priority: d.priority,
+        priority: sla.priority,
         status: "Open",
         technicianId: d.technicianId || null,
         createdById: session.id,
+        // The seam Phase U reads. Nothing here decides whether an SLA was met —
+        // that is the tracker's job, and this only says when the clock ran out.
+        slaDueAt: sla.dueAt,
+        escalated: false,
       },
     });
     await prismaLog(
@@ -80,7 +97,13 @@ export async function createTicketAction(_prev: ActionState, formData: FormData)
 
   revalidatePath("/support/tickets");
   revalidatePath("/dashboard");
-  return { success: `Ticket ${ticket.ticketNumber} created.` };
+  return {
+    success: `Ticket ${ticket.ticketNumber} created.${
+      sla.dueAt
+        ? ` Response due by ${sla.dueAt.toISOString().slice(0, 16).replace("T", " ")} (${sla.hours}h SLA).`
+        : ""
+    }`,
+  };
 }
 
 export async function updateTicketAction(

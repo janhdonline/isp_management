@@ -93,6 +93,132 @@ export async function billingReport(range: ReportRange) {
 /* Collection report                                                   */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Corporate and dedicated clients, with the contract figures (ISP.md §33).
+ *
+ * Reconciled against the customer table rather than computed: the receivables
+ * column is `previousDue`, the same field the dashboard and the suspension sweep
+ * read, so a corporate report that disagreed with the dashboard would be a
+ * third number to argue about.
+ *
+ * **SLA compliance is not computed here.** Phase U owns SLA tracking; until that
+ * exists there is no per-ticket resolution data to measure against, and inventing
+ * a percentage from what is available would be a figure nobody could defend. The
+ * column says so rather than showing a number that means nothing.
+ */
+export async function corporateReport() {
+  const customers = await prisma.customer.findMany({
+    where: { customerType: { in: ["Corporate", "Dedicated"] } },
+    orderBy: [{ companyName: "asc" }, { name: "asc" }],
+    select: {
+      id: true,
+      customerCode: true,
+      name: true,
+      username: true,
+      customerType: true,
+      companyName: true,
+      contactPerson: true,
+      contactPhone: true,
+      tradeLicenseNo: true,
+      cirMbps: true,
+      mirMbps: true,
+      slaHours: true,
+      billingLabel: true,
+      ipAddress: true,
+      ipType: true,
+      connectionStatus: true,
+      previousDue: true,
+      monthlyBill: true,
+      package: { select: { name: true, downloadSpeed: true, uploadSpeed: true } },
+      area: { select: { name: true } },
+      router: { select: { name: true } },
+    },
+  });
+
+  let totalReceivables = 0;
+  let totalMonthly = 0;
+  let missingCompany = 0;
+  const rows = customers.map((c) => {
+    totalReceivables += c.previousDue;
+    totalMonthly += c.monthlyBill;
+    if (!c.companyName) missingCompany += 1;
+    return {
+      ...c,
+      // The headroom between what is committed and what the link could do. Null
+      // when either rate is missing, because "unknown" and "no headroom" are very
+      // different things to say about a contract.
+      headroomMbps:
+        c.cirMbps != null && c.mirMbps != null ? Math.max(0, (c.mirMbps - c.cirMbps)) : null,
+    };
+  });
+
+  return {
+    rows,
+    metrics: {
+      clients: customers.length,
+      totalReceivables: round2(totalReceivables),
+      totalMonthly: round2(totalMonthly),
+      missingCompany,
+      withCir: customers.filter((c) => c.cirMbps != null).length,
+      slaCompliance: null as number | null,
+      slaComplianceNote: "pending Phase U",
+    },
+  };
+}
+
+/**
+ * Receivables by corporate client, with the contracted rates beside the money.
+ *
+ * A separate report from the customer list because the questions differ: one is
+ * "who are our corporate clients and what are they sold?", the other is "who owes
+ * us money?". Reconciled with `previousDue`, the same field the dashboard reads.
+ */
+export async function corporateCollectionReport(range: ReportRange) {
+  const [corporate, paidInRange] = await Promise.all([
+    prisma.customer.findMany({
+      where: { customerType: { in: ["Corporate", "Dedicated"] } },
+      orderBy: [{ companyName: "asc" }, { name: "asc" }],
+      select: {
+        id: true,
+        customerCode: true,
+        name: true,
+        companyName: true,
+        customerType: true,
+        cirMbps: true,
+        mirMbps: true,
+        previousDue: true,
+        billingStatus: true,
+      },
+    }),
+    prisma.payment.groupBy({
+      by: ["customerId"],
+      where: { paymentDate: { gte: range.from, lte: range.to } },
+      _sum: { amount: true },
+    }),
+  ]);
+  const paid = new Map(paidInRange.map((p) => [p.customerId, p._sum.amount ?? 0]));
+
+  let totalReceivables = 0;
+  let totalCollected = 0;
+  const rows = corporate.map((c) => {
+    const collected = round2(paid.get(c.id) ?? 0);
+    totalReceivables += c.previousDue;
+    totalCollected += collected;
+    return { ...c, collected };
+  });
+
+  return {
+    rows,
+    range,
+    metrics: {
+      clients: corporate.length,
+      totalReceivables: round2(totalReceivables),
+      totalCollected: round2(totalCollected),
+      debtors: rows.filter((r) => r.previousDue > 0).length,
+    },
+  };
+}
+
 export async function collectionReport(range: ReportRange) {
   const where = { paymentDate: { gte: range.from, lte: range.to } };
   const [byMethod, total, rows, accounts] = await Promise.all([
