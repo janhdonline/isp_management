@@ -682,6 +682,17 @@ async function notifyFupExceeded(
 }
 
 /**
+ * Watches network hardware for a change worth waking somebody for (Phase I).
+ *
+ * Runs after `syncNetwork` in the job list, so it compares against the status
+ * that sync just wrote rather than racing it.
+ */
+export async function deviceHealthWatchJob(): Promise<JobResult> {
+  const { deviceHealthWatch } = await import("@/lib/services/device-alerts");
+  return deviceHealthWatch();
+}
+
+/**
  * Recomputes per-customer daily usage (Phase H).
  *
  * Runs over a trailing window rather than just yesterday, so a night the sync
@@ -733,6 +744,7 @@ export async function runAllJobs() {
     enforcement: retryNetworkActions,
     collection: collectPayments,
     network: syncNetwork,
+    devices: deviceHealthWatchJob,
     usage: aggregateDailyUsage,
     fup: enforceFup,
     backup: runScheduledBackup,

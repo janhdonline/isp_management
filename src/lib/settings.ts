@@ -108,6 +108,24 @@ export const DEFAULT_SETTINGS: {
   // listener above: that is where this server accepts CoA, this is where it
   // sends it. RFC 5176 puts the NAS side on 3799.
   { key: "network.nasCoaPort", value: "3799", group: "Network" },
+  /// Device-down alerts (Phase I).
+  ///
+  /// Which channel an outage page goes out on. Telegram first: it is the only one
+  /// of the three somebody is likely to answer at 2am.
+  { key: "alerts.channel", value: "telegram", group: "Network" },
+  /// Comma-separated numbers, for SMS and WhatsApp. Empty means "the channel's own
+  /// default recipient" — which for Telegram is `api.telegramChatId`.
+  { key: "alerts.recipients", value: "", group: "Network" },
+  /// rxPower below this (dBm) counts as low signal. -25 dBm is roughly the point
+  /// where an ONU stops holding a stable PON link; below it a customer sees drops
+  /// at peak time rather than a clean outage, which is why it needs an alert of its
+  /// own rather than falling under "router down".
+  { key: "alerts.lowSignalDbm", value: "-25", group: "Network" },
+  /// How many consecutive bad syncs before an ONU is called bad. Two, not one: a
+  /// single below-threshold reading is usually a momentary dip, and alerting on it
+  /// trains the operator to ignore the signal.
+  { key: "alerts.lowSignalConsecutive", value: "2", group: "Network" },
+
   /// How long per-customer daily usage is kept (Phase H). 180 days is comfortably
   /// longer than any FUP cycle and long enough for a customer to dispute a bill
   /// from the previous quarter; past that the rows cost a table scan on every
@@ -156,6 +174,10 @@ export const DEFAULT_SETTINGS: {
   { key: "api.sslcommerzStorePassword", value: "", group: "API", isSecret: true },
   { key: "api.sslcommerzSandbox", value: "true", group: "API" },
   { key: "api.whatsappToken", value: "", group: "API", isSecret: true },
+  // Telegram, for alerts that have to reach somebody at 2am (Phase I). The chat
+  // id is not a secret; the bot token is.
+  { key: "api.telegramToken", value: "", group: "API", isSecret: true },
+  { key: "api.telegramChatId", value: "", group: "API" },
 
   // Automatic payment reminders (Phase F)
   //

@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { getDashboardStats, getDashboardCharts, type RangeKey } from "@/lib/services/dashboard";
 import { listExpiring } from "@/lib/services/customers";
 import { DashboardView, type DashStats } from "./dashboard-view";
+import { DeviceAlertBanner } from "@/components/network/device-alert-banner";
+import { listAlerts } from "@/lib/services/device-alerts";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Dashboard" };
@@ -16,10 +18,12 @@ export default async function DashboardPage({
   const from = typeof sp.from === "string" ? sp.from : undefined;
   const to = typeof sp.to === "string" ? sp.to : undefined;
 
-  const [stats, charts, expiring] = await Promise.all([
+  const [stats, charts, expiring, openAlerts] = await Promise.all([
     getDashboardStats(),
     getDashboardCharts(range, from, to),
     listExpiring({ window: "month", perPage: 8 }),
+    // Only the banner, so the dashboard does not carry the whole alert history.
+    listAlerts({ status: "Open", take: 6 }),
   ]);
 
   // BigInt is not serialisable across the server/client boundary.
@@ -42,5 +46,18 @@ export default async function DashboardPage({
     })),
   };
 
-  return <DashboardView stats={view} charts={charts} range={range} from={from} to={to} />;
+  return (
+    <>
+      <DeviceAlertBanner count={openAlerts.openCount} alerts={openAlerts.rows.map((a) => ({
+        id: a.id,
+        deviceType: a.deviceType,
+        deviceName: a.deviceName,
+        kind: a.kind,
+        openedAt: a.openedAt.toISOString(),
+        notifiedAt: a.notifiedAt?.toISOString() ?? null,
+        notifyError: a.notifyError,
+      }))} />
+      <DashboardView stats={view} charts={charts} range={range} from={from} to={to} />
+    </>
+  );
 }

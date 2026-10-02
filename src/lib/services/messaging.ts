@@ -202,6 +202,50 @@ async function sendWhatsApp(to: string, body: string): Promise<SendOutcome> {
   }
 }
 
+/**
+ * Telegram, for an alert that has to reach somebody at 2am.
+ *
+ * The only channel here with a real chance of being answered at that hour, and the
+ * one an on-call engineer already has open. Token and chat id come from settings;
+ * nothing is compiled in.
+ */
+async function sendTelegram(to: string, body: string): Promise<SendOutcome> {
+  const s = await getSettings();
+  const token = s["api.telegramToken"]?.trim();
+  const defaultChat = s["api.telegramChatId"]?.trim();
+  // An explicit `to` wins, so one alert can be addressed to a different chat.
+  const chatId = (to?.trim() || defaultChat || "").replace(/^@/, "");
+  if (!token || !chatId) {
+    return { ok: false, configured: false, error: "Telegram is not configured." };
+  }
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text: body }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      return {
+        ok: false,
+        configured: true,
+        error: `Telegram returned ${res.status}: ${text.slice(0, 200)}`,
+      };
+    }
+    const parsed = JSON.parse(text) as { result?: { message_id?: number } };
+    return { ok: true, configured: true, providerId: String(parsed.result?.message_id ?? "") };
+  } catch (e) {
+    return {
+      ok: false,
+      configured: true,
+      error: e instanceof Error ? e.message : "Telegram request failed",
+      retriable: true,
+    };
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Dispatch                                                            */
 /* ------------------------------------------------------------------ */
@@ -220,6 +264,8 @@ export async function dispatch(
       return sendEmail(to, subject ?? "", body);
     case "WhatsApp":
       return sendWhatsApp(to, body);
+    case "Telegram":
+      return sendTelegram(to, body);
     default:
       return {
         ok: false,
@@ -312,6 +358,11 @@ export async function isChannelConfigured(channel: string): Promise<boolean> {
       s["api.emailSmtpUser"] &&
       s["api.emailSmtpPass"],
     );
+  }
+  // Telegram is the one channel with a "who on call" answer that does not need a
+  // phone number: the chat id is the recipient.
+  if (channel === "Telegram") {
+    return Boolean(s["api.telegramToken"]?.trim() && s["api.telegramChatId"]?.trim());
   }
   return false;
 }

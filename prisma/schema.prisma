@@ -1204,6 +1204,47 @@ model DailyUsage {
   @@index([date])
 }
 
+/// An operator-visible incident on a piece of network hardware (ISP.md §32).
+///
+/// One incident is one row, not a stream of them. A router that is down for six
+/// hours produces exactly one open `Down` alert and one `Recovered` notice when it
+/// comes back, however many times the monitor ran in between — which is the whole
+/// point, because a flapping device that pages somebody twenty times is worse than
+/// one that pages once.
+///
+/// **`dedupeKey` is what enforces that**, not a check-then-insert. It is set for
+/// the *open* alert only (`deviceId:Down:Open`) and set to null when that alert is
+/// resolved, which frees the key for the next incident while `@unique` collapses
+/// every concurrent insert in between. The database settles the race; application
+/// code cannot.
+model DeviceAlert {
+  id         String  @id @default(cuid())
+  /// Router | OLT
+  deviceType String
+  deviceId   String
+  deviceName String
+  /// Down | Recovered | LowSignal
+  kind       String
+  /// Open | Resolved
+  status     String  @default("Open")
+  detail     String?
+  /// Set for an open alert, null once resolved. Enforces one open alert per
+  /// (device, kind); see above.
+  dedupeKey  String? @unique
+  /// When the notification went out, and whether it worked. Null means nobody was
+  /// reachable — the alert still exists, because a page that failed to send is not
+  /// a reason to believe the device is fine.
+  notifiedAt  DateTime?
+  notifyChannel String?
+  notifyError   String?
+  openedAt   DateTime @default(now())
+  resolvedAt DateTime?
+
+  @@index([status, openedAt])
+  @@index([deviceType, deviceId])
+  @@index([kind, status])
+}
+
 /// Failed sign-in attempts, so a lockout survives a restart and is shared
 /// across every instance behind a load balancer.
 model LoginAttempt {

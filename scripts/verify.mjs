@@ -425,7 +425,7 @@ console.log("\nbackground jobs");
     check("cron runs with a valid token", first.status === 200, `got ${first.status}`);
     check(
       "cron reports every job",
-      ["invoices", "expiry", "messages", "backup", "radiusLogs"].every(
+      ["invoices", "expiry", "messages", "backup", "radiusLogs", "devices"].every(
         (k) => k in (firstBody.results ?? {})
       ),
       JSON.stringify(firstBody.results ?? {})

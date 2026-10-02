@@ -1403,6 +1403,55 @@ customer's own equipment, and those go to different people.
 
 ------------------------------------------------------------------------
 
+## 32. Device-Down Alerts
+
+A router can die at 2am and nobody knows until customers call. This turns a
+device's status changing into one alert, one notification, and — when it comes
+back — one recovery notice.
+
+**One incident, one alert.** A router down for six hours produces one row and one
+page, not one per poll. An operator woken six times in six hours stops reading the
+alerts, and the one time it mattered is the one they had muted.
+
+**The dedupe is in the database.** `DeviceAlert.dedupeKey` is unique and holds only
+for an *open* alert, so every monitor run while the device is still down attempts
+the same key and the index rejects it. Resolving nulls the key, which frees it for
+the next incident. There is no existence check anywhere in this path: a
+check-then-insert is two queries and a window in which two concurrent runs both
+pass the check, which is precisely the run the cron route gets when two schedulers
+fire at once.
+
+**Transitions, not states.** The monitor remembers the last status it saw per
+device, in a settings row. That memory is not the same thing as the open alert: an
+open alert answers "do we believe this is broken?", the remembered status answers
+"was it working an hour ago?". A device with no alert and a last-seen of `Offline`
+is fine and known; one with no alert and a last-seen of `Online` has just gone
+down. Without the second, a fresh deployment pages about every device it inherits.
+
+**A failed page is not a quiet page.** The alert stays `Open` and records
+`notifiedAt: null` with the reason. A device down and nobody told is a different
+thing from a device down and paged, and the dashboard says which it is.
+
+**Low signal** is its own alert rather than falling under "router down": an ONU
+below −25 dBm produces drops at peak time rather than a clean outage, and nobody
+reacts to it. It needs **two consecutive bad readings** — one is a dip, and alerting
+on a dip is how a signal gets ignored. The streak is persisted rather than held in
+memory, or a monitor that restarted on every deploy would never reach two and would
+never alert at all. An ONU with no reading is not called low-signal: that is a
+different failure and guessing at it would page for the wrong thing.
+
+**Telegram** is the default channel, and the only one of the three with a real
+chance of being answered at 2am. Settings → Network: `alerts.channel`,
+`alerts.recipients`, `alerts.lowSignalDbm`, `alerts.lowSignalConsecutive`.
+
+**Where it surfaces.** Network → Alerts for the history, and a banner on the
+dashboard with the open count. The banner is on the dashboard because the person
+who needs to see an overnight outage is usually not looking at the network page —
+they are looking at the dashboard because they just logged in. It renders nothing
+when nothing is wrong, because a banner that is always there gets ignored.
+
+------------------------------------------------------------------------
+
 ## Final Requirement
 
 The final UI must feel like **one unified ISP operating system**, not
