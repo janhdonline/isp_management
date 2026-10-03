@@ -13,6 +13,27 @@ export type AreaFormState = {
   success?: string;
 };
 
+/**
+ * The coordinates a form posted, as a pair or as nothing.
+ *
+ * The picker's hidden fields are empty strings when no pin was dropped, and a
+ * `Float` column will not take `""`. `(0, 0)` is refused for the same reason the
+ * map refuses to draw it: it is an empty field that parsed as a number, and it is
+ * in the Gulf of Guinea.
+ */
+function position(parsed: { latitude?: unknown; longitude?: unknown }): {
+  latitude: number | null;
+  longitude: number | null;
+} {
+  const lat = parsed.latitude;
+  const lng = parsed.longitude;
+  if (typeof lat !== "number" || typeof lng !== "number") {
+    return { latitude: null, longitude: null };
+  }
+  if (lat === 0 && lng === 0) return { latitude: null, longitude: null };
+  return { latitude: lat, longitude: lng };
+}
+
 export async function createAreaAction(raw: Record<string, unknown>): Promise<AreaFormState> {
   const session = await requirePermission("areas.create");
   const parsed = areaSchema.safeParse(raw);
@@ -23,7 +44,8 @@ export async function createAreaAction(raw: Record<string, unknown>): Promise<Ar
   });
   if (dup) return { errors: { name: ["An area with this name already exists in that zone"] } };
 
-  const area = await prisma.area.create({ data: parsed.data });
+  const { latitude, longitude, ...rest } = parsed.data;
+  const area = await prisma.area.create({ data: { ...rest, ...position({ latitude, longitude }) } });
   await logActivity({ action: "Create", entity: "Area", entityId: area.id, summary: `Created area ${area.name}` }, session.id);
   revalidatePath("/areas");
   return { success: `Area ${area.name} created.` };
@@ -34,9 +56,10 @@ export async function updateAreaAction(id: string, raw: Record<string, unknown>)
   const parsed = areaSchema.safeParse(raw);
   if (!parsed.success) return { errors: fieldErrors(parsed.error), formError: "Please fix the highlighted fields." };
 
+  const { latitude, longitude, ...rest } = parsed.data;
   const area = await prisma.area.update({
     where: { id },
-    data: { ...parsed.data, zoneId: parsed.data.zoneId || null },
+    data: { ...rest, ...position({ latitude, longitude }), zoneId: parsed.data.zoneId || null },
   });
   await logActivity({ action: "Update", entity: "Area", entityId: id, summary: `Updated area ${area.name}` }, session.id);
   revalidatePath("/areas");

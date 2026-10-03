@@ -29,6 +29,20 @@ import { addDays, round2, startOfDay } from "@/lib/utils";
 /** What a reminder is about. The word appears in the idempotency key. */
 export type ReminderKind = "expiry" | "due";
 
+/**
+ * The `Notification.template` values that are reminders.
+ *
+ * The seam between the two views of the queue. It used to be "has an idempotency
+ * key", which was true of only one thing until Phase L: fiber-outage messages are
+ * exactly-once across concurrent runs of the fault job, so they carry a key too,
+ * and on the old test they would have appeared on the Reminders page and been
+ * picked up by the reminder drain — where a WhatsApp-first ISP would deliver an
+ * outage notice through the fallback chain that reminders use.
+ *
+ * Named here, next to the code that writes them, and imported by both readers.
+ */
+export const REMINDER_TEMPLATES = ["expiry-reminder", "due-reminder"] as const;
+
 /** The invoice slot for an expiry reminder: there is no invoice. */
 const NO_INVOICE = "none";
 
@@ -502,7 +516,15 @@ async function flushHeldReminders(
   if (isQuiet(quiet, now)) return 0;
 
   const held = await prisma.notification.findMany({
-    where: { idempotencyKey: { not: null }, status: "Scheduled", scheduledAt: { lte: now } },
+    // Template-scoped, for the reason on `REMINDER_TEMPLATES`: a queued fiber
+    // message also carries a key, and delivering it here would send an outage
+    // notice down the reminder fallback chain.
+    where: {
+      idempotencyKey: { not: null },
+      template: { in: [...REMINDER_TEMPLATES] },
+      status: "Scheduled",
+      scheduledAt: { lte: now },
+    },
     select: { id: true, idempotencyKey: true, recipient: true, body: true, customerId: true },
     take: 200,
   });

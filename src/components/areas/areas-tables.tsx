@@ -9,6 +9,7 @@ import { DropdownMenu } from "@/components/ui/dropdown";
 import { ConfirmDialog, Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
+import MapPicker from "@/components/network/map-picker";
 import { useToast } from "@/components/providers";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import { MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
@@ -269,7 +270,15 @@ export function SimpleFormModal({
   kind: Kind;
   title: string;
   description?: string;
-  defaults?: { name?: string; code?: string; zoneId?: string; status?: string; description?: string };
+  defaults?: {
+    name?: string;
+    code?: string;
+    zoneId?: string;
+    status?: string;
+    description?: string;
+    latitude?: number | null;
+    longitude?: number | null;
+  };
   zones?: { id: string; name: string }[];
   id?: string;
   name?: string;
@@ -361,10 +370,22 @@ export function SimpleFormModal({
             </Field>
           </>
         ) : (
-          <Field label="Description">
-            <Textarea name="description" rows={2} defaultValue={defaults?.description} />
-          </Field>
+          <>
+            <Field label="Description">
+              <Textarea name="description" rows={2} defaultValue={defaults?.description} />
+            </Field>
+          </>
         )}
+        {kind === "area" ? (
+          // Last, because the map is tall and the fields an operator types every
+          // time should not have to scroll past it.
+          <Field
+            label="Position"
+            hint="Used on the fiber map, and as the fallback pin when an incident's OLT has no coordinates of its own."
+          >
+            <MapPicker latitude={defaults?.latitude} longitude={defaults?.longitude} />
+          </Field>
+        ) : null}
         <Field label="Status">
           <Select name="status" defaultValue={defaults?.status ?? "Active"} options={[{ value: "Active", label: "Active" }, { value: "Inactive", label: "Inactive" }]} />
         </Field>

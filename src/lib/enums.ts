@@ -114,6 +114,10 @@ export const COMPLAINT_CATEGORIES = [
   "Cable Problem",
   "Payment Problem",
   "Package Problem",
+  /// Raised by the fault-localization job (ISP.md §35), never by a customer:
+  /// one ticket for a whole cut, so that a hundred people reporting the same
+  /// fiber break produce one crew dispatch and not a hundred tickets.
+  "Fiber Fault",
   "Other",
 ] as const;
 

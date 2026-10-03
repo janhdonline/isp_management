@@ -136,6 +136,63 @@ const AREA_NAMES = [
   "Lalmatia", "Shyamoli", "Pallabi", "Mirpur DOHS", "Kafrul",
 ];
 
+/**
+ * Approximate positions for the seeded areas (Phase L).
+ *
+ * Real neighbourhoods, roughly right — good enough for a demo dataset to show a
+ * map that means something. They are **not surveyed positions**, and no ISP should
+ * take them as such: on a live network the coordinates come from the map picker
+ * on the Areas page, from whoever stands in front of the cabinet.
+ *
+ * Keyed by name, not by index, so adding an area to `AREA_NAMES` cannot silently
+ * move every device below it on the map.
+ */
+const AREA_COORDS: Record<string, [number, number]> = {
+  "Uttara Sector 1": [23.7937, 90.4066],
+  "Uttara Sector 2": [23.789, 90.403],
+  "Mirpur 10": [23.805, 90.381],
+  "Mirpur 11": [23.8075, 90.3745],
+  "Bashundhara Residential": [23.822, 90.427],
+  Banani: [23.7937, 90.4066],
+  "Gulshan 1": [23.7925, 90.4078],
+  "Gulshan 2": [23.788, 90.411],
+  "Dhanmondi 27": [23.746, 90.392],
+  Mohammadpur: [23.766, 90.356],
+  Lalmatia: [23.76, 90.363],
+  Shyamoli: [23.763, 90.372],
+  Pallabi: [23.798, 90.366],
+  "Mirpur DOHS": [23.8035, 90.379],
+  Kafrul: [23.789, 90.376],
+};
+
+/** A position a few hundred metres from another, so markers do not stack. */
+function near([lat, lng]: [number, number], metres: number): [number, number] {
+  const dLat = ((metres / 111_320) * (rnd() - 0.5) * 2);
+  const dLng =
+    ((metres / (111_320 * Math.cos((lat * Math.PI) / 180))) * (rnd() - 0.5) * 2);
+  return [Number((lat + dLat).toFixed(6)), Number((lng + dLng).toFixed(6))];
+}
+
+/**
+ * A position object for a create call, or `{}` when the base is unknown.
+ *
+ * Returning `{}` rather than a pair of nulls is the point: a device with no known
+ * position has to be left off the map entirely, and the only way to guarantee that
+ * is to never write the columns.
+ */
+function position(base: [number, number] | undefined, metres = 120) {
+  if (!base) return {};
+  const [latitude, longitude] = near(base, metres);
+  return { latitude, longitude };
+}
+
+/** The seeded position for an area, by id. Undefined when that area has none. */
+function areaBase(areas: { id: string; name: string }[], areaId: string | null | undefined) {
+  if (!areaId) return undefined;
+  const area = areas.find((a) => a.id === areaId);
+  return area ? AREA_COORDS[area.name] : undefined;
+}
+
 const PKG_DEFS = [
   { name: "Home Basic 5", downloadSpeed: 5, uploadSpeed: 1, monthlyPrice: 500, installationFee: 500, validityDays: 30, fupLimit: null },
   { name: "Home Basic 10", downloadSpeed: 10, uploadSpeed: 2, monthlyPrice: 800, installationFee: 500, validityDays: 30, fupLimit: null },
@@ -168,6 +225,7 @@ async function seedReference() {
           code: `AR-${String(i + 1).padStart(3, "0")}`,
           zoneId: zones[i % zones.length].id,
           status: i === AREA_NAMES.length - 1 ? "Inactive" : "Active",
+          ...position(AREA_COORDS[AREA_NAMES[i]], 0),
         },
       })
     );
@@ -235,6 +293,10 @@ async function seedReference() {
           useSsl: false,
           status: "Unknown",
           areaId: r.areaId ?? null,
+          // A cabinet is not on its area's centroid, it is a few hundred metres
+          // off it — which is what stops several routers in one area rendering as
+          // a single dot.
+          ...position(areaBase(areas, r.areaId)),
         },
       })
     );
@@ -248,13 +310,49 @@ async function seedReference() {
   ]) {
     olts.push(
       await prisma.olt.create({
-        data: { ...o, areaId: o.areaId ?? null, status: "Unknown" },
+        data: {
+          ...o,
+          areaId: o.areaId ?? null,
+          status: "Unknown",
+          // The exchange building. This is the pin a fiber incident uses, so it is
+          // the one coordinate on this map worth getting right.
+          ...position(areaBase(areas, o.areaId), 90),
+        },
       })
     );
   }
 
   const onus: string[] = [];
+  const fiberRoutes: {
+    name: string;
+    oltId: string;
+    areaId: string;
+    note: string;
+    points: { lat: number; lng: number }[];
+  }[] = [];
   for (const olt of olts) {
+    // The feeder: a run of waypoints out of the exchange. Not a straight line to
+    // the first ONU — fiber follows the ducts, and the shape of the run is what
+    // tells a technician which span to look at.
+    if (olt.latitude != null && olt.longitude != null && olt.areaId) {
+      const line: { lat: number; lng: number }[] = [
+        { lat: olt.latitude, lng: olt.longitude },
+      ];
+      let lat = olt.latitude;
+      let lng = olt.longitude;
+      for (let span = 0; span < 5; span++) {
+        [lat, lng] = near([lat, lng], 420);
+        line.push({ lat, lng });
+      }
+      fiberRoutes.push({
+        name: `${olt.name} feeder`,
+        oltId: olt.id,
+        areaId: olt.areaId,
+        note: "Main feeder out of the exchange, recorded as walked rather than as the crow flies.",
+        points: line,
+      });
+    }
+
     for (let i = 0; i < between(6, 14); i++) {
       const serial = `HWTC${between(100000, 999999)}${between(1000, 9999)}`;
       onus.push(serial);
@@ -272,6 +370,14 @@ async function seedReference() {
           txPower: round2(between(2, 8) * -0.1),
           status,
           lastSeenAt: status === "Online" ? addDays(new Date(), 0) : addDays(new Date(), -between(1, 9)),
+          // The drop point, scattered around its own OLT rather than the area's
+          // centroid — so the map shows a network and not three overlapping dots.
+          ...position(
+            olt.latitude != null && olt.longitude != null
+              ? ([olt.latitude, olt.longitude] as [number, number])
+              : undefined,
+            900
+          ),
         },
       });
     }
@@ -302,6 +408,10 @@ async function seedReference() {
   }
 
   await prisma.smsCredit.create({ data: { balance: 4820, sent: 0, failed: 0 } });
+
+  for (const route of fiberRoutes) {
+    await prisma.fiberRoute.create({ data: route });
+  }
 
   return { zones, areas, packages, accounts, routers, olts, onus, employees, cash, bank, bkash, nagad, rocket };
 }

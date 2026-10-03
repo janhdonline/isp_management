@@ -7,6 +7,7 @@ import { customerCycleUsage } from "@/lib/services/fup";
 import { round2, startOfDay, addDays } from "@/lib/utils";
 import { prismaLog } from "@/lib/services/activity";
 import { enforceSetProfile } from "@/lib/services/network-enforcement";
+import { FIBER_TEMPLATES } from "@/lib/services/fiber";
 import type { Tx } from "@/lib/counter";
 import type { JobResult } from "@/lib/services/job-result";
 
@@ -265,7 +266,18 @@ export async function sendScheduledMessages(): Promise<JobResult> {
     // scheduling time, which for a WhatsApp-first ISP is the channel that has
     // already failed once tonight. Letting it pick them up would deliver some
     // reminders through a different route than the rest, for no reason.
-    where: { idempotencyKey: null, status: "Scheduled", scheduledAt: { lte: new Date() } },
+    // Two kinds of row, and the exclusion below is the reason this is an `OR`
+    // rather than the plain `idempotencyKey: null` it started as. A fiber-outage
+    // message (Phase L) *does* carry an idempotency key, because it has to be
+    // exactly-once across concurrent runs of the fault job — and a filter of
+    // `idempotencyKey: null` would skip it for ever. Those rows were queued by a
+    // job that is not a reminder and do not need the reminder fallback chain, so
+    // this worker sends them on the channel recorded at queue time.
+    where: {
+      status: "Scheduled",
+      scheduledAt: { lte: new Date() },
+      OR: [{ idempotencyKey: null }, { template: { in: [...FIBER_TEMPLATES] } }],
+    },
     select: {
       id: true,
       channel: true,
@@ -693,6 +705,19 @@ export async function deviceHealthWatchJob(): Promise<JobResult> {
 }
 
 /**
+ * Turns a dead OLT or a dead PON port into an affected-customer list, one bulk
+ * ticket and one message batch (Phase L).
+ *
+ * Runs immediately after `deviceHealthWatch`, which is the job that knows what
+ * changed: this one does not poll devices, it reads what that watch compared
+ * against and works out who it cost.
+ */
+export async function localizeFaultsJob(): Promise<JobResult> {
+  const { localizeFaults } = await import("@/lib/services/fiber");
+  return localizeFaults();
+}
+
+/**
  * Recomputes per-customer daily usage (Phase H).
  *
  * Runs over a trailing window rather than just yesterday, so a night the sync
@@ -745,6 +770,7 @@ export async function runAllJobs() {
     collection: collectPayments,
     network: syncNetwork,
     devices: deviceHealthWatchJob,
+    faults: localizeFaultsJob,
     usage: aggregateDailyUsage,
     fup: enforceFup,
     backup: runScheduledBackup,

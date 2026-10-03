@@ -10,6 +10,7 @@
 
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
+import { REMINDER_TEMPLATES } from "@/lib/services/reminders";
 import { DEFAULT_PER_PAGE, type ListParams } from "@/lib/query";
 import { startOfDay } from "@/lib/utils";
 
@@ -51,9 +52,12 @@ export async function listReminders(p: ListParams = {}) {
   const perPage = p.perPage ?? DEFAULT_PER_PAGE;
 
   const and: Prisma.NotificationWhereInput[] = [
-    // The only reminder rows carry a key. This is what separates the two views
-    // without a second table, and it cannot drift from the scheduler.
-    { idempotencyKey: { not: null } },
+    // Scoped by template, not by "carries an idempotency key". Both were true of
+    // reminders alone until Phase L added fiber-outage messages, which are
+    // exactly-once too — so a key no longer means "reminder", and filtering on it
+    // put outage notices on this page. Named in the scheduler that writes them, so
+    // the two cannot drift apart.
+    { template: { in: [...REMINDER_TEMPLATES] } },
   ];
   if (p.status) and.push({ status: p.status });
   if (p.channel) and.push({ channel: p.channel });

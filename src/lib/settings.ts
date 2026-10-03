@@ -114,6 +114,26 @@ export const DEFAULT_SETTINGS: {
   /// worth paying for.
   { key: "corporate.defaultSlaHours", value: "4", group: "Billing" },
 
+  /// Fiber fault localization (Phase L).
+  ///
+  /// ON, because it only ever acts on a transition — a device that was already
+  /// dark when the job was deployed raises nothing. Off is a choice an operator
+  /// makes when they would rather dispatch by hand.
+  { key: "faults.enabled", value: "true", group: "Network" },
+  /// How many ONUs must drop on one PON port before it counts as a fiber cut
+  /// rather than a handful of customers with their own problems. Five: a PON
+  /// port carries far more than that, so five simultaneous drops is a common
+  /// event upstream of it rather than five coincidences.
+  { key: "faults.onuClusterThreshold", value: "5", group: "Network" },
+  /// The window those drops have to fall inside. Ten minutes is about as long as
+  /// it takes to walk to a nearby splice enclosure, which is the point: a burst
+  /// inside one window is one incident, the same number spread over two hours is
+  /// three coincidences and three separate visits.
+  { key: "faults.onuClusterWindowMinutes", value: "10", group: "Network" },
+  /// Off: the customers were told a team was dispatched, and "you are back" is a
+  /// third message to somebody who has just had a bad hour.
+  { key: "faults.notifyRecovery", value: "false", group: "Network" },
+
   /// Device-down alerts (Phase I).
   ///
   /// Which channel an outage page goes out on. Telegram first: it is the only one

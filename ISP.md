@@ -1583,6 +1583,94 @@ subscriber and does not make the pool look fuller than it is.
 
 ------------------------------------------------------------------------
 
+## 35. GIS Fiber Map and Fault Localization
+
+No geo fields existed anywhere in the schema. When fiber was cut, nobody knew
+which customers were affected until they called, and the technician drove around
+guessing. The hierarchy needed for the answer was already here — `Customer → Onu →
+Olt`, with `ponIndex` on the ONU — so only the geography was missing.
+
+**The affected list comes from the PON topology, not from geography.** An outage
+on one OLT resolves to its customers with one query, because a subscriber hangs
+off a specific ONU on a specific port. That is the whole point: the crew is sent
+to the cabinet the data says broke, rather than to the right postcode.
+
+**A dead OLT is not one incident, it is every ONU behind it.** Which means the
+naive version opens two tickets for one cut — the OLT rule fires, then the
+ONU-cluster rule fires on the same physical event and finds every customer already
+on the first ticket. The cluster rule therefore skips any PON whose own OLT is
+offline: that event is already open, at better resolution. Found by a test, not by
+reading the code.
+
+**The cluster rule needs a clock, so the job is the clock.** "N ONUs dropped within
+10 minutes" cannot be answered from status alone: a job only sees status at its own
+run boundaries, so two ONUs that dropped in the same run are indistinguishable from
+two that dropped a second apart. `Onu.lastSeenAt` existed and nothing ever wrote it.
+This job stamps it, one statement for every online ONU, and the rule then asks a
+real question. **Every** member of a cluster must be recent — one ONU that has
+been dark for a week is a dead ONU that happens to share a port, and counting it
+would lower the bar for every cluster on the network.
+
+**Both claims are unique indexes, and one of them was wrong at first.** The bulk
+ticket is claimed by `Ticket.dedupeKey` and the batch by
+`Notification.idempotencyKey`, both in the same transaction, so an incident can
+never exist as a ticket nobody was told about. The ticket key carries an hour
+bucket; the *message* keys were originally derived from it too, and that meant a
+customer could be told about at most one outage an hour — two separate cuts in the
+same hour opened a second ticket whose messages all collided with the first batch
+and were silently dropped. **The message keys are now keyed on the ticket id**,
+which is unique per incident and is exactly the granularity wanted. The tests
+found this one: a second outage forty minutes after the first produced a ticket
+and no notifications.
+
+**The hour bucket bounds a claim, not an outage.** Keeping one fault to one ticket
+across a six-hour failure is the *open-incident memory* in a settings row; the
+bucket is the claim for the case memory cannot help with — two processes racing a
+trigger neither has recorded yet. A fault crossing an hour boundary still produces
+one ticket and one batch, and there is a test for it.
+
+**A resolved incident gives its key back.** Otherwise a second outage on the same
+OLT could never be opened, and the database would be silently refusing to record a
+real event.
+
+**`(0, 0)` is not a location.** It is what an empty field parses as, and it is in
+the Gulf of Guinea. Refused at three layers — schema validation, the service, and
+the map — so an unlocated cabinet is *absent* rather than plotted in the ocean. An
+incident on a cabinet nobody has positioned says "location not recorded" in the
+ticket instead of inventing a pin.
+
+**The pin is a chain, and the order is the answer.** OLT cabinet, then area
+centroid, then the centroid of the affected ONUs — because the OLT is the node
+whose position *is* the thing that broke, and the ONU centroid is computed from the
+customers who actually lost service. A ticket on an OLT with no coordinates, in an
+area with none, and serving no located ONU says so and tells the office to ask.
+
+**Colour is not the only signal.** Red against green is exactly the distinction
+most people with the common forms of colour blindness cannot make, and this is the
+one page where being wrong about it sends a crew to the wrong building. OLTs are
+squares, routers diamonds, ONUs circles.
+
+**One unreadable route must not take the map down.** `points` is `Json`, so it can
+hold anything a hand-written INSERT left behind. The map parses every route and
+drops what it cannot draw, counting what it dropped — and the form stores the
+*parsed* points rather than the text typed, so what is accepted is always drawable.
+
+**Leaflet is loaded from a CDN, and typed by hand.** It is the only map on the
+site; a dependency would put 150 kB in every route's bundle and its `window` global
+in every unrelated test. The handful of API members actually called are declared
+locally, so anything added later is a compile error rather than a silent `any`.
+
+**OLT and ONU status is still written by nothing at runtime.** This module reacts
+to whatever wrote `status` — the same seam Phase I reads — so on a deployment with
+no poller it fires when an operator or a future SNMP collector changes a status,
+and not before. That is inherited, not introduced here.
+
+**Recovery is a note, not a second message.** The customers were told a team was
+dispatched and it was. "Your internet is back" is a third message to somebody who
+has just had a bad hour, so it sits behind `faults.notifyRecovery`, off.
+
+------------------------------------------------------------------------
+
 ## Final Requirement
 
 The final UI must feel like **one unified ISP operating system**, not

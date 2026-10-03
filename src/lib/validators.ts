@@ -347,6 +347,13 @@ export const areaSchema = z.object({
   code: optionalText(20),
   zoneId: z.string().trim().optional().or(z.literal("")),
   status: z.enum(["Active", "Inactive"]).default("Active"),
+  /// Written by the map picker as hidden fields (Phase L). Optional and
+  /// uncoerced: an area with no position is a legitimate state, and an empty
+  /// string must become null rather than NaN, or it would be stored as a
+  /// coordinate that is not one. `(0, 0)` is refused by the same test the map
+  /// draws with, so a stored pair is always drawable.
+  latitude: z.coerce.number().min(-90).max(90).optional().or(z.literal("")),
+  longitude: z.coerce.number().min(-180).max(180).optional().or(z.literal("")),
 });
 
 // ---------------------------------------------------------------------------

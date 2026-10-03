@@ -127,6 +127,10 @@ model Area {
   branchId  String?
   branch    Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   status    String   @default("Active")
+  /// Centroid of the area, used as the map pin and as the fallback pin for a
+  /// fiber incident when the OLT's own position is unknown.
+  latitude  Float?
+  longitude Float?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -135,6 +139,7 @@ model Area {
   ipPools   IpPool[]
   olts      Olt[]
   onus      Onu[]
+  fiberRoutes FiberRoute[]
   employees Employee[]
   resellers Reseller[]
   tickets   Ticket[]
@@ -536,6 +541,11 @@ model Router {
   useSsl      Boolean   @default(false)
   /// Where subscribers are terminated: "ppp" (PPPoE) or "hotspot".
   sessionSource String  @default("ppp")
+  /// Where on the ground the cabinet is. Optional: a router with no coordinates
+  /// is simply absent from the fiber map rather than pinned at (0, 0), which is
+  /// the Gulf of Guinea and looks like a bug on every world view.
+  latitude  Float?
+  longitude Float?
   /// Whether this app may create, reprofile and delete PPP secrets here.
   ///
   /// Off by default, and it must stay that way. Writing to a router is not a
@@ -586,13 +596,45 @@ model Olt {
   ponPorts   Int      @default(0)
   status     String   @default("Unknown") // Online | Offline | Unknown
   lastSyncAt DateTime?
+  /// Where the OLT cabinet stands. Used as the map pin for a fiber incident when
+  /// nothing more precise is known, so a technician is sent to the site rather
+  /// than to (0, 0).
+  latitude   Float?
+  longitude  Float?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   onus      Onu[]
   customers Customer[]
+  /// Fiber runs leaving this OLT, drawn on the map as the actual route rather
+  /// than a straight line between two markers.
+  fiberRoutes FiberRoute[]
 
   @@index([status])
+}
+
+/// One fiber run, as the crew walked it.
+///
+/// `points` is an ordered `[{ lat, lng }, ...]`, drawn as a polyline. It is a
+/// `Json` array rather than a child table because it is only ever read and
+/// written whole: there is nothing to query *inside* a route, and a separate row
+/// per waypoint would make editing a route two dozen writes to keep in order.
+model FiberRoute {
+  id    String @id @default(cuid())
+  name  String
+  points Json
+  /// Optional links: a route is usually one OLT's feeder or one area's laterals,
+  /// but a route that serves neither is still worth drawing.
+  oltId  String?
+  olt    Olt?   @relation(fields: [oltId], references: [id], onDelete: SetNull)
+  areaId String?
+  area   Area?  @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  note   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([oltId])
+  @@index([areaId])
 }
 
 model Onu {
@@ -609,6 +651,9 @@ model Onu {
   txPower    Float?
   status     String   @default("Offline") // Online | Offline | Low Signal
   lastSeenAt DateTime?
+  /// The drop point, if the crew has walked out where the ONT actually hangs.
+  latitude   Float?
+  longitude  Float?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -671,6 +716,13 @@ model Ticket {
   createdBy    User?     @relation("TicketCreator", fields: [createdById], references: [id], onDelete: SetNull)
   resolvedAt   DateTime?
   closedAt     DateTime?
+  /// Set only on a ticket that stands for many customers at once — currently
+  /// just the fiber-fault ticket (ISP.md §35). Unique, because two concurrent
+  /// runs of the fault job both deciding they are first to notice the same outage
+  /// is a race the database has to lose one of; a check-then-insert is two
+  /// queries and both of them can pass the check. Null on an ordinary ticket,
+  /// which is not deduplicated and several of them are legitimate.
+  dedupeKey    String?   @unique
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

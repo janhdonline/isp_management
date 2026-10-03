@@ -778,13 +778,16 @@ console.log("\nPayment reminders (Phase F)");
   const page = await api("/notifications/reminders");
   check("the Reminders page renders", page.status === 200, `got ${page.status}`);
   const html = typeof page.body === "string" ? page.body : "";
-  // Either the empty-state explanation or a populated table. Asserting the
-  // explanation alone would fail on any instance that has already sent one, which
-  // is most of them by the time anybody reads this.
+  // Three acceptable renderings, and the third is the one the comment used to
+  // claim while only testing for the first two: an instance that has already sent
+  // a reminder shows a populated table, which is correct and was being reported
+  // as a failure. "Customer" is a column header only present when rows exist.
   check(
     "the Reminders page explains itself",
-    /No reminders yet/i.test(html) || /Nothing matches these filters/i.test(html),
-    "expected either the empty-state text or a table of reminders"
+    /No reminders yet/i.test(html) ||
+      /Nothing matches these filters/i.test(html) ||
+      /<th[^>]*>\s*Customer\s*<\/th>/i.test(html),
+    "expected the empty state, the filter message, or a populated table"
   );
 
   const settings = await api("/settings/notifications");
@@ -885,6 +888,25 @@ console.log("\nIP pools (Phase K)");
   const html = typeof pools.body === "string" ? pools.body : "";
   check("it reports utilisation", /Utilisation/i.test(html));
   check("it lists addresses with a status", /Allocated|Reserved|Free/.test(html));
+}
+
+/* ---------------------------------------------------------------- */
+console.log("\nFiber map and fault localization (Phase L)");
+{
+  const map = await api("/network/fiber-map");
+  check("the fiber map page renders", map.status === 200, `got ${map.status}`);
+  const html = typeof map.body === "string" ? map.body : "";
+  check("it counts what is on the map", /OLTs on the map/i.test(html));
+  check("it offers fiber routes", /Fiber routes/i.test(html));
+  check(
+    "devices with no coordinates are called out rather than drawn at (0, 0)",
+    !/,\s*0\.000000/.test(html) || /no coordinates yet/.test(html)
+  );
+
+  // The nav entry has to exist, or the map is only reachable by typing the URL.
+  const network = await api("/network");
+  const nav = typeof network.body === "string" ? network.body : "";
+  check("it is reachable from the Network menu", /\/network\/fiber-map/.test(nav));
 }
 
 console.log(`\n${"─".repeat(46)}`);

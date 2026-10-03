@@ -11,6 +11,7 @@ const JOBS = [
   "collection",
   "network",
   "devices",
+  "faults",
   "usage",
   "fup",
   "backup",
