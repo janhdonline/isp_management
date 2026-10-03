@@ -1920,6 +1920,102 @@ called by a sync, because that belongs to a person deciding to.
 
 ------------------------------------------------------------------------
 
+## 38. PON Port Capacity Planning
+
+A 1:64 split fills up silently. There is no alarm, no error and nothing on any
+screen — the 65th ONU on a port is simply refused by the OLT, and the ISP hears
+about it as a customer whose light does not come on. By then the fix is a second
+port and a second cable, not a decision.
+
+## Nothing here is stored
+
+Every number in this module is counted from the `Onu` rows that exist right now. No
+occupancy column, no counter, no cache. That is not minimalism; it is the only safe
+design:
+
+  - A stored count is a second copy of a fact `Onu.ponIndex` already holds, and it
+    is wrong the moment an ONU moves, a Phase N sync relocates it, or a row is
+    deleted. **Nothing anywhere updates a counter when a device is unplugged.**
+  - A **cached suggestion is worse than no suggestion.** It was computed from a
+    count that was true a moment ago, and what an operator does with it is put a
+    real ONU on a real port. Offering a port that is now full is how a port goes
+    past capacity: the suggestion is the *mechanism* by which the overfill happens,
+    so it must not be able to be stale.
+
+The cost is a grouped count per render. An OLT has a few hundred ports and a few
+thousand ONUs, so that is one query, not a scan of anything a dashboard should
+flinch at.
+
+## A port is the part before the colon
+
+`0/1/1:2` is frame 0, slot 1, port 1, ONU slot 2. The split ratio applies to the
+**port**; the ONU slot is which of the 64 an ONU occupies. Counting the whole
+string would treat every ONU as its own port and report a network at 3% that is
+really full. There is a test that does exactly that and asserts one port.
+
+An index with no colon — which is what the Phase N SNMP driver writes when a vendor
+does not report the frame — is taken whole rather than dropped.
+
+## Unassigned is a bucket, not a hole
+
+An ONU with no `ponIndex` occupies capacity nobody can see. It is counted under a
+synthetic `unassigned` bucket on every report and on every OLT page, sorted **last**
+because it is the worst row and sorting it among real ports makes it the hardest to
+see. It reads as 100% full, which is the loudest honest way to say "no port has
+been assigned to this".
+
+And it is excluded from the suggestion: an unassigned bucket is not somewhere to
+put the next ONU.
+
+## The count alone is not enough — the race is in the check
+
+"Count the ONUs, and if the count is below the split, insert" has a race in it. Two
+assignments for the last slot both count 63, both see room, both insert, and the
+port ends up with 65 ONUs on a 64 split. That is the exact failure this module
+exists to prevent, reached *through* the check.
+
+So the count and the insert happen inside one transaction, and that transaction
+takes a row lock on the **OLT**:
+
+    SELECT id FROM "Olt" WHERE id = $1 FOR UPDATE
+
+Concurrent assignments on the same cabinet serialise, and the loser re-reads the
+count with the winner's ONU already in it. A lock on the ONU row would not help —
+the two assignments are usually about *different* ONUs, so there is no shared row
+to lock. Locking the cabinet is coarse: two operators filling two different ports
+on one OLT wait for each other, which is milliseconds, and entirely acceptable next
+to overfilling a port.
+
+The UI hides full ports from the list, which is usability. The transaction is the
+rule.
+
+## A refusal names the alternative
+
+"Suggestions" recompute on every call, least-loaded first, ties broken on the port
+name so the same state always produces the same answer — an operator who is told
+`0/1/2`, writes it down, and finds a different port offered next time has a bug
+report and not a bad day.
+
+When a port is refused, the response says where to go instead, and the dashboard
+form offers the next one preselected rather than hidden: **preselected, not
+automatic**. An operator can see what the system thinks and disagree with it, which
+is the difference between a suggestion and an autopilot.
+
+## The split ratio is per cabinet
+
+`Olt.splitRatio` is nullable, and null means "use `pon.defaultSplitRatio`" — 64,
+because that is the GPON split and what a Huawei or VSOL cabinet does out of the
+box. A cabinet reconfigured down says so on its own row, which is a property of the
+hardware and belongs on the hardware rather than in a settings key named after a
+cuid.
+
+This matters more than it looks. At 64, a port holding 58 ONUs is at 91% and gets a
+warning. Drop the same cabinet to 32 and those 58 ONUs are **over** capacity — a
+port the OLT is already refusing additions to, reported as 91% healthy. Derived, so
+the warning changes the moment the number does.
+
+------------------------------------------------------------------------
+
 ## Final Requirement
 
 The final UI must feel like **one unified ISP operating system**, not

@@ -1013,6 +1013,41 @@ console.log("\nOLT vendor adapters (Phase N)");
   );
 }
 
+/* ---------------------------------------------------------------- */
+console.log("\nPON port capacity (Phase O)");
+{
+  const report = await api("/network/pon-utilization");
+  check("the utilisation report renders", report.status === 200, `got ${report.status}`);
+  const html = typeof report.body === "string" ? report.body : "";
+  check("it reports a split ratio", /1:64|Split|split/i.test(html));
+  check("it calls out full ports", /Full|full/i.test(html));
+
+  // The OLT detail page is the per-port view, and it is only reachable from the
+  // OLT list once the link exists.
+  const olts = await api("/network/olt");
+  const oltHtml = typeof olts.body === "string" ? olts.body : "";
+  const detail = /\/network\/olt\/([a-z0-9]{10,})/.exec(oltHtml);
+  check("the OLT list links to per-port capacity", Boolean(detail), "no /network/olt/<id> link");
+
+  if (detail) {
+    const page = await api(`/network/olt/${detail[1]}`);
+    check("an OLT's ports page renders", page.status === 200, `got ${page.status}`);
+    const pageHtml = typeof page.body === "string" ? page.body : "";
+    check("it shows a port table", /Port|port/i.test(pageHtml));
+    check("it shows the assignment form", /Place an ONU/i.test(pageHtml));
+    // A count is a count: the page must not be showing a stored figure that can
+    // drift from the ONU table.
+    check(
+      "it says the counts come from the ONU table",
+      /ONU table/i.test(pageHtml),
+      "the derived-not-stored explanation should be on the page"
+    );
+  }
+
+  const nav = await api("/network");
+  check("it is reachable from the Network menu", /\/network\/pon-utilization/.test(typeof nav.body === "string" ? nav.body : ""));
+}
+
 console.log(`\n${"─".repeat(46)}`);
 console.log(`  ${pass} passed, ${fail} failed`);
 console.log(`${"─".repeat(46)}\n`);

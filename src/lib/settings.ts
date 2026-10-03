@@ -189,6 +189,19 @@ export const DEFAULT_SETTINGS: {
   { key: "tr069.wifiPasswordPolicy", value: "pppoe", group: "Network" },
   { key: "tr069.provisionTimeoutSec", value: "20", group: "Network" },
 
+  /// Phase O. How many ONUs one PON port carries, for cabinets that have not set
+  /// their own.
+  ///
+  /// 64, because that is the GPON split ratio and what a Huawei or VSOL cabinet
+  /// does out of the box. A cabinet that has been reconfigured down says so on its
+  /// own row (`Olt.splitRatio`), which takes precedence — and getting that wrong is
+  /// how a 1:64 port quietly passes 32 ONUs and starts dropping the far ones.
+  { key: "pon.defaultSplitRatio", value: "64", group: "Network" },
+  /// A port at this percentage or above is flagged before it is full. 90%, because
+  /// 100% is when customers notice, and the point of the warning is to act at the
+  /// stage where acting is still cheap.
+  { key: "pon.nearCapacityPercent", value: "90", group: "Network" },
+
   /// Device-down alerts (Phase I).
   ///
   /// Which channel an outage page goes out on. Telegram first: it is the only one

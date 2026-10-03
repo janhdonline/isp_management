@@ -594,6 +594,15 @@ model Olt {
   areaId     String?
   area       Area?    @relation(fields: [areaId], references: [id], onDelete: SetNull)
   ponPorts   Int      @default(0)
+  /// How many ONUs one PON port carries on this cabinet — 64 on a GPON split, 32
+  /// on some older or configured-down equipment.
+  ///
+  /// Null means "use the network default" (`pon.defaultSplitRatio`), which is the
+  /// right answer for most cabinets and the wrong one for an OLT that has been
+  /// reconfigured to 32. Deliberately a number on the row rather than a setting
+  /// key per OLT: it is a property of the hardware, it is queried when usage is
+  /// derived, and an operator changing it needs to see it on the cabinet.
+  splitRatio Int?
   status     String   @default("Unknown") // Online | Offline | Unknown
   /// Which adapter speaks to this OLT: `snmp-huawei`, `snmp-bdcom`,
   /// `snmp-vsol`. Null means nobody polls this cabinet, which is different from

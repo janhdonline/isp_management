@@ -169,7 +169,17 @@ export function OltsTable({ rows }: { rows: OltRow[] }) {
     },
     { key: "ip", header: "IP", hideBelow: "sm", cell: (r) => <span className="font-mono text-xs">{r.ipAddress ?? "—"}</span>, exportValue: (r) => r.ipAddress ?? "" },
     { key: "location", header: "Location", hideBelow: "lg", cell: (r) => <span className="text-xs text-fg-muted">{r.location ?? "—"}</span>, exportValue: (r) => r.location ?? "" },
-    { key: "pon", header: "PON Ports", align: "right", cell: (r) => <span className="tnum text-xs">{r.ponPorts}</span>, exportValue: (r) => r.ponPorts },
+    {
+      key: "pon",
+      header: "PON Ports",
+      align: "right",
+      cell: (r) => (
+        <Link href={`/network/olt/${r.id}`} className="tnum text-xs hover:text-brand-600">
+          {r.ponPorts}
+        </Link>
+      ),
+      exportValue: (r) => r.ponPorts,
+    },
     { key: "online", header: "Online ONU", align: "right", cell: (r) => <span className="tnum text-xs font-semibold text-emerald-600 dark:text-emerald-400">{r.onlineOnu}</span>, exportValue: (r) => r.onlineOnu },
     { key: "offline", header: "Offline ONU", align: "right", hideBelow: "md", cell: (r) => <span className="tnum text-xs text-red-600 dark:text-red-400">{r.offlineOnu}</span>, exportValue: (r) => r.offlineOnu },
     { key: "low", header: "Low Signal", align: "right", hideBelow: "lg", cell: (r) => <span className="tnum text-xs text-amber-600 dark:text-amber-400">{r.lowSignalOnu}</span>, exportValue: (r) => r.lowSignalOnu },
