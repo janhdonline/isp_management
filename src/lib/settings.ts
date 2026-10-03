@@ -134,6 +134,37 @@ export const DEFAULT_SETTINGS: {
   /// third message to somebody who has just had a bad hour.
   { key: "faults.notifyRecovery", value: "false", group: "Network" },
 
+  /// Zero-touch ONU provisioning (Phase M).
+  ///
+  /// Off until an operator turns it on. The endpoint is the only unauthenticated-
+  /// by-session route in the app that *creates* rows, so it should never be armed
+  /// by accident: an unconfigured device can then appear in the database on its
+  /// own. When it is off, an Inform is refused rather than ignored — a device
+  /// being told "try later" retries, whereas one told nothing waits forever.
+  { key: "tr069.enabled", value: "false", group: "Network" },
+  /// Shared secret between this ACS and the devices. Empty means the endpoint is
+  /// disabled outright. Keep it out of the database with ACS_SECRET if the
+  /// Settings table is editable by anyone who should not have it.
+  { key: "tr069.acsSecret", value: "", group: "Network", isSecret: true },
+  /// Where the device management API lives. Vendor ACS bridges differ per
+  /// deployment, so this is configuration and not a hardcoded host. Empty means
+  /// the simulated adapter is used, which is labelled as simulated everywhere it
+  /// appears.
+  { key: "tr069.deviceApiUrl", value: "", group: "Network" },
+  { key: "tr069.vlanId", value: "100", group: "Network" },
+  /// `{username}` is the only token. The result is capped at 32 bytes, which is
+  /// the SSID limit — a device silently truncating a longer name leaves the
+  /// customer hunting for a network that is not there under the name they were
+  /// given.
+  { key: "tr069.wifiSsidPattern", value: "isp-{username}", group: "Network" },
+  /// `pppoe` — the WiFi key equals the PPPoE password, so the customer has one
+  /// credential rather than two. `derived` — an HMAC of the ACS secret keyed on
+  /// the serial: recomputable by support on the phone, storable nowhere.
+  /// There is no `random`, because a random key would have to be stored to be
+  /// read back to the customer, and nothing in this module stores a secret.
+  { key: "tr069.wifiPasswordPolicy", value: "pppoe", group: "Network" },
+  { key: "tr069.provisionTimeoutSec", value: "20", group: "Network" },
+
   /// Device-down alerts (Phase I).
   ///
   /// Which channel an outage page goes out on. Telegram first: it is the only one

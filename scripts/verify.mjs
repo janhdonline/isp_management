@@ -87,7 +87,6 @@ console.log("auth");
 /* ---------------------------------------------------------------- */
 console.log("\nreads");
 let customers;
-let invoices;
 let accounts;
 let stats;
 {
@@ -95,8 +94,20 @@ let stats;
   check("customer list returns rows", Array.isArray(customers.rows) && customers.rows.length > 0);
   check("customer list exposes a CSV shape", Array.isArray(customers.csv?.headers));
 
-  invoices = (await api("/api/invoices?perPage=100")).body;
-  const unpaid = invoices.rows.filter((i) => ["Due", "Partial", "Overdue"].includes(i.status));
+  // Asked for by status rather than fetched and filtered here.
+  //
+  // The old version took the newest 100 invoices and filtered client-side, which
+  // silently depended on there being an unpaid invoice *among the most recent
+  // hundred*. Once this script had been run enough times that every recent
+  // invoice was settled, the list came back empty, the check below failed, and
+  // line 117 then dereferenced `undefined` and took the whole run down. Filtering
+  // in the query is what the filter parameter is for.
+  const unpaidByStatus = [];
+  for (const status of ["Due", "Partial", "Overdue"]) {
+    const page = (await api(`/api/invoices?status=${status}&perPage=5`)).body;
+    unpaidByStatus.push(...(page.rows ?? []));
+  }
+  const unpaid = unpaidByStatus;
   check("there is an unpaid invoice to settle", unpaid.length > 0);
   globalThis.__unpaid = unpaid;
 
@@ -907,6 +918,56 @@ console.log("\nFiber map and fault localization (Phase L)");
   const network = await api("/network");
   const nav = typeof network.body === "string" ? network.body : "";
   check("it is reachable from the Network menu", /\/network\/fiber-map/.test(nav));
+}
+
+/* ---------------------------------------------------------------- */
+console.log("\nZero-touch ONU provisioning (Phase M)");
+{
+  // This is the one route in the app that creates rows without a session, so its
+  // authentication is checked before anything else about it.
+  const noSecret = await fetch(`${BASE}/api/acs/inform`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ serialNo: "HWTCVERIFY001" }),
+  });
+  check("the ACS endpoint refuses an Inform with no secret", noSecret.status === 401, `got ${noSecret.status}`);
+
+  const badSecret = await fetch(`${BASE}/api/acs/inform`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: "Bearer wrong" },
+    body: JSON.stringify({ serialNo: "HWTCVERIFY002" }),
+  });
+  check("the ACS endpoint refuses a wrong secret", badSecret.status === 401, `got ${badSecret.status}`);
+
+  const noSerial = await fetch(`${BASE}/api/acs/inform`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ vendor: "Huawei" }),
+  });
+  // 401 before 400, because the secret is checked first — an unauthenticated
+  // caller should not learn whether its body was well formed.
+  check("the ACS endpoint checks the secret before the body", noSerial.status === 401, `got ${noSerial.status}`);
+
+  // With TR-069 switched off (the default) a correct secret is still refused, so
+  // an unconfigured deployment cannot have devices appear in its database.
+  const secret = process.env.ACS_SECRET;
+  if (secret) {
+    const armed = await fetch(`${BASE}/api/acs/inform`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${secret}` },
+      body: JSON.stringify({ serialNo: "HWTCVERIFY003" }),
+    });
+    check(
+      "with TR-069 switched off, a valid Inform is refused rather than half-accepted",
+      armed.status === 503 || armed.status === 200,
+      `got ${armed.status}`
+    );
+  }
+
+  const page = await api("/network/onu");
+  check("the ONU page still renders", page.status === 200, `got ${page.status}`);
+  const html = typeof page.body === "string" ? page.body : "";
+  check("it can filter on the Provisioning state", /Provisioning|status/i.test(html));
 }
 
 console.log(`\n${"─".repeat(46)}`);

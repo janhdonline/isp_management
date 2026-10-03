@@ -46,6 +46,7 @@ export type CustomerFormDefaults = {
   macAddress?: string;
   routerId?: string;
   onuId?: string;
+  onuSerial?: string;
   oltId?: string;
   ponPort?: string;
   connectionDate?: string;
@@ -400,8 +401,15 @@ export function CustomerForm({
             <Field label="OLT">
               <Select name="oltId" defaultValue={defaults.oltId ?? ""} placeholder="Select OLT" options={olts.map((o) => ({ value: o.id, label: o.name }))} />
             </Field>
-            <Field label="ONU">
-              <Input name="onuId" defaultValue={defaults.onuId} placeholder="ONU serial" />
+            <Field
+              label="ONU"
+              hint="The serial printed on the device. It appears here by itself once the ONU has checked in — plugging it in is enough. Assigning it configures the device with this customer's PPPoE access and WiFi."
+            >
+              <Input
+                name="onuSerial"
+                defaultValue={defaults.onuSerial}
+                placeholder="HWTC1234567890"
+              />
             </Field>
             <Field label="PON Port">
               <Input name="ponPort" defaultValue={defaults.ponPort} placeholder="0/1/2:4" />

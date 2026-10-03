@@ -40,7 +40,15 @@ export type NetworkActionType =
   | "reconnect"
   | "provision"
   | "setProfile"
-  | "removeSecret";
+  | "removeSecret"
+  /**
+   * Phase M. A configuration push to an ONU rather than a command to a router,
+   * sharing this queue because it shares the property that matters: the database
+   * must never claim something reached the network when it did not. `routerId` is
+   * null and `username` holds the device serial — the only handle a CPE knows
+   * itself by.
+   */
+  | "onuConfigure";
 
 /** How each action reads on an audit log and in the enforcement queue. */
 const ACTION_LABELS: Record<NetworkActionType, string> = {
@@ -49,6 +57,7 @@ const ACTION_LABELS: Record<NetworkActionType, string> = {
   provision: "Provision",
   setProfile: "Set profile",
   removeSecret: "Remove secret",
+  onuConfigure: "Configure ONU",
 };
 
 /**
@@ -634,6 +643,11 @@ function describeOutcome(action: NetworkActionType, enabled: boolean): string {
       return "Reprofiled";
     case "removeSecret":
       return "Removed the secret for";
+    case "onuConfigure":
+      // Only reachable from the retry path's early branch, which never calls
+      // `resolve`. Present so the switch stays exhaustive and a future edit that
+      // does route here has an answer.
+      return "Configured";
   }
   void enabled;
 }
@@ -719,6 +733,19 @@ export async function retryPendingNetworkActions(max = 50): Promise<{
     // Backoff: after the first few tries, stop trying every cycle. A router
     // offline for a day is not going to be fixed by the twentieth attempt.
     if (!isDueForRetry(row)) continue;
+
+    // Phase M. A queued ONU configuration is the same promise with a different
+    // device behind it, so it belongs in the same queue and on the same ladder —
+    // but it must be handed to the TR-069 adapter, not to a router. Routing it
+    // through the executor below would look the customer's access router up and
+    // push a CPE's WiFi settings to a MikroTik.
+    if (row.action === "onuConfigure") {
+      const { retryOnuConfigure } = await import("@/lib/services/tr069");
+      const done = await retryOnuConfigure({ id: row.id });
+      if (done) stats.done += 1;
+      else stats.failed += 1;
+      continue;
+    }
 
     // Re-read the customer: a row can outlive the subscription it was for, and
     // acting on a customer's current status rather than the old one is the only

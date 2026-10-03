@@ -14,7 +14,11 @@ export const metadata: Metadata = { title: "Edit Customer" };
 export default async function EditCustomerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const [customer, areas, packages, routers, olts, resellers] = await Promise.all([
-    prisma.customer.findUnique({ where: { id } }),
+    prisma.customer.findUnique({
+      where: { id },
+      // The ONU is included only for its serial, which is what the form shows.
+      include: { onu: { select: { serialNo: true } } },
+    }),
     getAreasSimple(),
     getAllPackages(),
     listRouters(),
@@ -75,7 +79,9 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
             macAddress: customer.macAddress ?? undefined,
             routerId: customer.routerId ?? undefined,
             oltId: customer.oltId ?? undefined,
-            onuId: customer.onuId ?? undefined,
+            // The form field is a serial (Phase M): the operator reads it off the
+            // device, not out of the database.
+            onuSerial: customer.onu?.serialNo ?? undefined,
             ponPort: customer.ponPort ?? undefined,
             connectionDate: customer.connectionDate.toISOString(),
             billingDate: customer.billingDate ? customer.billingDate.toISOString() : undefined,

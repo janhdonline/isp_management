@@ -1671,6 +1671,131 @@ has just had a bad hour, so it sits behind `faults.notifyRecovery`, off.
 
 ------------------------------------------------------------------------
 
+## 36. Zero-Touch ONU Provisioning (TR-069)
+
+Every ONU used to be configured by hand. A technician logged into the device's own
+web UI, typed PPPoE credentials into a form, set a WiFi name, and walked away. It
+is slow, it does not scale, and a transposed digit in a PPPoE password produces a
+symptom — a line that associates and then fails every login — which sends the
+diagnosis to the wrong end of the problem entirely.
+
+The device already knows how to ask for help. An unconfigured ONT boots, finds an
+ACS, and sends an Inform saying *I am here, this is what I am*. Everything after
+that moment is our job rather than the technician's.
+
+### The device checks in; it does not get configured
+
+`POST /api/acs/inform` creates the ONU row with `status: Provisioning`. **Not
+Online** — the device has announced itself and has nothing working on it yet, and
+saying otherwise hides it from every count and from the Phase L map, where it would
+look like a healthy subscriber's equipment.
+
+### An Inform may not change an existing device
+
+This is the single most important rule in the phase, and it is not about which
+columns to copy.
+
+An unknown serial **creates**. A known serial updates exactly two fields:
+`lastSeenAt`, and `status` when the device reports itself online. Nothing else —
+not vendor, not model, not OLT, not PON port, not the customer link.
+
+The reason is that first contact is the only contact that happens with somebody
+standing next to the hardware. Every later Inform is an unauthenticated claim from
+the network that happens to identify itself with that serial, and a re-flashed or
+spoofed device will report whatever it was told to report. Letting a routine
+heartbeat move an ONU to another OLT's PON port puts a live subscriber's equipment
+on the wrong card — and the wrong card is where an outage investigation starts.
+
+The shared secret is the only credential, so anyone holding it can claim to be any
+device. That is honest about what TR-069 deployment commonly looks like, and the
+blast radius is exactly what `recordInform` bounds: the worst a caller with the
+secret can do is *create* rows, never repoint live ones.
+
+### Two Informs at once, on purpose
+
+`create` is attempted and its unique violation caught, rather than find-then-create.
+A check-then-create is two queries and both can pass the check — and a brand-new
+ONU reporting in twice is the *normal* case, because Inform is retried until it is
+answered. The catch path lands on the same state the known-serial path produces, so
+a race and a duplicate arrive at the same place.
+
+### Nothing secret is stored by this module
+
+The pushed configuration contains the customer's PPPoE password in plaintext,
+because that is the entire point of the push. Three consequences:
+
+  - **`Tr069Log` has a `payloadHash` column and no payload column.** A SHA-256 is
+    enough to answer the only two questions anyone asks of this log — did we try,
+    and was it the same attempt as last time — and useless to a reader hoping for
+    a credential.
+  - **The retry outbox stores no payload either.** Not the password, not a hash. A
+    retry re-reads the customer's *current* password. This deliberately differs
+    from Phase A, which pins a router profile on the row: a profile name is not a
+    secret, and here the fresh read is better anyway — if the password changed
+    while the device was unreachable, the device should end up with the one that
+    works now, not the one that was wrong.
+  - **WiFi passwords are derived, never stored.** There is deliberately no
+    `random` policy, because a random key would have to be stored to be read back
+    to the customer. `pppoe` gives the customer one credential instead of two;
+    `derived` is an HMAC of the ACS secret keyed on the serial, which support can
+    recompute on the phone without reading anything from the database, and which
+    nobody else can produce. Rotating the ACS secret changes every derived key —
+    the correct blast radius, since so does every WiFi device.
+
+### The form field was broken before this phase
+
+`Customer.onuId` is a foreign key to `Onu.id`. The customer form asked for a
+**serial** in a field named `onuId`. So the one field linking a subscriber to
+their equipment could not be filled in at all: a serial matches no id, and the
+write either did nothing or failed the constraint. The field is now `onuSerial`
+and is resolved to a row.
+
+An unmatched serial is a **form error**, not a skipped link. Until a device has
+checked in there is no row to point at, and silently ignoring the serial would
+leave an operator looking at a customer record that says the device was assigned,
+with no device assigned and no message — at which point they go and type the
+serial into the ONU's own web UI, which is the exact step this phase removes.
+Creating the row instead would be worse: a mistyped serial becomes a phantom ONU
+on the map, on the fault-localization path and in every device count.
+
+### A device that will not answer
+
+The queue row is written **before** the device is called, for Phase A's reason: a
+crash between the two must not lose the request, because the failure mode of
+losing it is a customer whose line is installed and does not work, with nothing
+in the system to show for it. The push is an `onuConfigure` row on the same
+`NetworkAction` outbox and the same backoff ladder as the router queue — one
+promise, two devices — but handed to the TR-069 adapter, never to a router.
+
+A failed push leaves the action `Pending`, never `Failed`. `Failed` is terminal
+and unretried, so a device that was briefly unreachable would be written off after
+one attempt. **The ONU row is not touched on failure**: it stays `Provisioning`,
+because flipping it to `Online` on a push that did not land is the exact lie that
+status value exists to prevent.
+
+The one thing that *is* terminal is a missing PPPoE password. Ten retries over
+hours will not invent one, and a person has to.
+
+### The one route in the app that writes without a session
+
+So its authentication is the interesting part. Three things:
+
+  - **No secret configured means no Inform is accepted at all** — 503, not an
+    empty-string comparison. An empty setting must never become an empty shared
+    secret, or the first device on the internet registers itself.
+  - **The comparison is constant-time.** The repo does not do this anywhere else;
+    the cron route uses `!==`. A byte-at-a-time comparison of a shared secret is a
+    timing oracle that recovers it one byte at a time, and this secret is the only
+    thing between the internet and the right to add rows. Two lines of cost.
+  - **The secret is checked before the body**, so an unauthenticated caller cannot
+    learn whether its Inform was well formed.
+
+3xx and 4xx mean "you are wrong, do not keep trying". 5xx means "try again", which
+a real CPE will. Sending 200 to a failed request leaves a device that never learns
+it was rejected.
+
+------------------------------------------------------------------------
+
 ## Final Requirement
 
 The final UI must feel like **one unified ISP operating system**, not

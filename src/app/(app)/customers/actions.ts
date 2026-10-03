@@ -19,6 +19,7 @@ import { setPortalPassword } from "@/lib/portal-auth";
 import { checkPasswordStrength } from "@/lib/password";
 import { changePackage, deleteCustomer, disconnectCustomer, reconnectCustomer, renewCustomer, suspendCustomer } from "@/lib/services/customers";
 import { syncCustomerBilling } from "@/lib/services/billing";
+import { provisionOnuForCustomer } from "@/lib/services/tr069";
 import { bookActivationAdvance } from "@/lib/services/wallet";
 import {
   enforceProvision,
@@ -110,7 +111,10 @@ export async function createCustomerAction(
         macAddress: d.macAddress || null,
         routerId: d.routerId || null,
         oltId: d.oltId || null,
-        onuId: d.onuId || null,
+        // Resolved from the serial the operator typed, not taken as an id. See
+        // `resolveOnuSerial` for why an unmatched serial is an error rather than a
+        // silently-skipped link.
+        ...(await resolveOnuSerial(d.onuSerial)),
         ponPort: d.ponPort,
         connectionDate: d.connectionDate,
         billingDate: d.billingDate ?? null,
@@ -163,13 +167,24 @@ export async function createCustomerAction(
   // call fails the action is queued and the retry job carries it out.
   const provisioned = await maybeProvisionOnRouter(result, session.id);
 
+  // The ONU push is a separate device and a separate adapter, but the same
+  // ordering rule: after the commit, outside the transaction, queued rather than
+  // retried inline.
+  const onuResult = await maybeProvisionOnu(
+    result.id,
+    (await prisma.customer.findUnique({ where: { id: result.id }, select: { onuId: true } }))
+      ?.onuId,
+    null
+  );
+
   revalidatePath("/customers");
   revalidatePath("/dashboard");
   revalidatePath("/network");
 
-  const suffix = provisioned.queued
-    ? " Router provisioning is queued and will be retried automatically."
-    : "";
+  const suffix =
+    (provisioned.queued
+      ? " Router provisioning is queued and will be retried automatically."
+      : "") + onuResult.note;
 
   const intent = formData.get("_intent");
   if (intent === "invoice") {
@@ -249,6 +264,14 @@ export async function updateCustomerAction(
     return { errors: fieldErrors(parsed.error), formError: "Please fix the highlighted fields." };
   }
 
+  // Read the current ONU link before the write, so the push below only fires on a
+  // real change. Re-pushing on every unrelated field edit would reboot the
+  // customer's device each time somebody corrects a spelling mistake.
+  const beforeOnu = await prisma.customer.findUnique({
+    where: { id },
+    select: { onuId: true },
+  });
+
   if (parsed.data.username) {
     const dup = await prisma.customer.findUnique({
       where: { username: parsed.data.username },
@@ -271,7 +294,7 @@ export async function updateCustomerAction(
         macAddress: d.macAddress === "" ? null : (d.macAddress ?? undefined),
         routerId: d.routerId === "" ? null : (d.routerId ?? undefined),
         oltId: d.oltId === "" ? null : (d.oltId ?? undefined),
-        onuId: d.onuId === "" ? null : (d.onuId ?? undefined),
+        ...(await resolveOnuSerial(d.onuSerial, true)),
         // Corporate fields on edit too, so a Home account converted to Corporate
         // gets them and a Corporate account converted back has them cleared. The
         // `corporateFields` helper makes that symmetric, which a spread of
@@ -303,9 +326,103 @@ export async function updateCustomerAction(
   });
 
   await syncCustomerBilling(id);
+
+  const afterOnu = await prisma.customer.findUnique({
+    where: { id },
+    select: { onuId: true },
+  });
+  const onuResult = await maybeProvisionOnu(id, afterOnu?.onuId, beforeOnu?.onuId);
+
   revalidatePath(`/customers/${id}`);
   revalidatePath("/customers");
-  return { success: "Customer updated." };
+  return { success: `Customer updated.${onuResult.note}` };
+}
+
+/* ------------------------------------------------------------------ */
+/* Zero-touch ONU assignment (Phase M)                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Turns the serial an operator typed into the ONU row's id.
+ *
+ * ## Why this has to exist at all
+ *
+ * `Customer.onuId` is a foreign key to `Onu.id`, and the form field has always
+ * asked for a *serial* under the name `onuId`. So the one field that links a
+ * subscriber to their equipment could not be filled in: a serial matches no id,
+ * and the write either did nothing or failed the constraint. This is what makes
+ * it work, and it is why the form field was renamed to `onuSerial` rather than the
+ * value being coerced somewhere invisible.
+ *
+ * ## An unmatched serial is an error, not a skipped link
+ *
+ * The device has to have checked in first — booted, found the ACS, sent an
+ * Inform. Until it has, there is no row to point at. Silently ignoring the
+ * serial would leave the operator looking at a customer record that says the
+ * device was assigned, with no device assigned, and no message; they would then
+ * go and type the serial into the ONU's own web UI, which is the exact manual
+ * step this phase exists to remove.
+ *
+ * Creating the row here instead would be worse: a mistyped serial would become a
+ * phantom ONU that appears on the map, on the fiber-localization path, and in
+ * every device count, and that nobody can ever talk to.
+ *
+ * `onEdit` changes what an empty field means. On create, blank means "not
+ * assigned". On edit, blank means "unassign" — so it has to produce `null`, and a
+ * create must not accidentally clear an existing link by leaving the field alone.
+ */
+async function resolveOnuSerial(
+  serial: string | undefined,
+  onEdit = false
+): Promise<{ onuId?: string | null }> {
+  const value = (serial ?? "").trim();
+  if (!value) return onEdit ? { onuId: null } : {};
+
+  const onu = await prisma.onu.findUnique({
+    where: { serialNo: value },
+    select: { id: true },
+  });
+
+  if (!onu) {
+    throw new Error(
+      `No ONU with the serial "${value}" has checked in yet. Plug the device in and let it report to the ACS first — it appears on its own within a minute — then save this form again.`
+    );
+  }
+
+  return { onuId: onu.id };
+}
+
+/**
+ * Pushes the customer's configuration to their ONU, after the commit.
+ *
+ * Same reasoning as `maybeProvisionOnRouter` above, and for the same reasons: a
+ * device call held open across a transaction holds a lock for as long as the
+ * device takes to answer, and the office must be able to save a customer when the
+ * device cannot be reached. A failure is queued on the same outbox and retried.
+ *
+ * Best-effort by design — a customer with no ONU is the normal case for most of
+ * the day, and an install should not be reported as failed because a device is
+ * asleep.
+ */
+async function maybeProvisionOnu(
+  customerId: string,
+  onuId: string | null | undefined,
+  wasOnuId: string | null | undefined
+): Promise<{ queued: boolean; note: string }> {
+  if (!onuId) return { queued: false, note: "" };
+  // Re-saving a customer who already had this ONU would re-push the same
+  // configuration on every unrelated field edit — a device reboot each time.
+  if (onuId === wasOnuId) return { queued: false, note: "" };
+
+  const result = await provisionOnuForCustomer(customerId);
+  if (result.ok) return { queued: false, note: " The ONU was configured." };
+  if (result.queued) {
+    return {
+      queued: true,
+      note: " The device did not answer, so its configuration is queued and will be retried automatically.",
+    };
+  }
+  return { queued: false, note: ` ONU configuration was not sent: ${result.detail}` };
 }
 
 /* ------------------------------------------------------------------ */

@@ -642,6 +642,10 @@ model Onu {
   serialNo   String   @unique
   name       String?
   vendor     String?
+  /// Reported by the device in its Inform, on first contact only. "Huawei" alone
+  /// tells an operator nothing; "MA5800" tells them which firmware to look at.
+  /// Kept out of the update path for the same reason as every other Inform field.
+  model      String?
   oltId      String?
   olt        Olt?     @relation(fields: [oltId], references: [id], onDelete: SetNull)
   areaId     String?
@@ -649,7 +653,12 @@ model Onu {
   ponIndex   String?
   rxPower    Float? // dBm
   txPower    Float?
-  status     String   @default("Offline") // Online | Offline | Low Signal
+  /// Online | Offline | Low Signal | Provisioning | Unknown
+  ///
+  /// `Provisioning` is not a radio state. It means the device told the ACS it
+  /// exists and has not been given a working configuration — a different problem
+  /// from an outage, and one that needs a different person to look at it.
+  status     String   @default("Offline")
   lastSeenAt DateTime?
   /// The drop point, if the crew has walked out where the ONT actually hangs.
   latitude   Float?
@@ -658,9 +667,42 @@ model Onu {
   updatedAt  DateTime @updatedAt
 
   customers Customer[]
+  /// Every TR-069 operation against this device, in the order it happened.
+  tr069Logs Tr069Log[]
 
   @@index([status])
   @@index([oltId])
+}
+
+/// One TR-069 operation against one device, and how it went.
+///
+/// There is deliberately **no payload column** here. A pushed configuration
+/// contains the customer's PPPoE password, so the row records a SHA-256 of the
+/// payload instead: enough to prove that two pushes were identical, and useless
+/// to anybody who reads the table. `detail` is written by our own code, never
+/// copied from the device's answer.
+model Tr069Log {
+  id       String  @id @default(cuid())
+  onuId    String?
+  onu      Onu?    @relation(fields: [onuId], references: [id], onDelete: SetNull)
+  /// Kept even when the ONU row is gone: the serial is the device's own identity,
+  /// and is what a support agent reads off the bottom of the box.
+  serialNo String
+  /// inform | pushConfig | reboot | factoryReset
+  action   String
+  /// Hex SHA-256 of the payload that was sent, or of the Inform that arrived.
+  payloadHash String?
+  /// Success | Failure
+  result    String
+  /// Why it failed, or what the device reported. Never contains a secret.
+  detail    String?
+  /// The outbox row when this attempt was a retry of a queued push.
+  actionId  String?
+  createdAt DateTime @default(now())
+
+  @@index([serialNo, createdAt])
+  @@index([onuId, createdAt])
+  @@index([result, createdAt])
 }
 
 model OnlineSession {

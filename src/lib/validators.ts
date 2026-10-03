@@ -183,6 +183,12 @@ const customerBase = z.object({
     macAddress: z.string().trim().optional().or(z.literal("")),
     routerId: z.string().trim().optional().or(z.literal("")),
     oltId: z.string().trim().optional().or(z.literal("")),
+  /// The device *serial*, not the ONU row id. The form has always asked for a
+  /// serial under a field called `onuId`, which is a foreign key — so typing one
+  /// in wrote a value that either matched nothing or blew up the constraint, and
+  /// the field could not be used at all. Phase M resolves the serial to a row and
+  /// stores the id.
+  onuSerial: z.string().trim().max(60).optional().or(z.literal("")),
     onuId: z.string().trim().optional().or(z.literal("")),
     ponPort: optionalText(40),
     connectionDate: dateStr,

@@ -122,7 +122,16 @@ export const COMPLAINT_CATEGORIES = [
 ] as const;
 
 // --- Network device status ---
-export const DEVICE_STATUSES = ["Online", "Offline", "Low Signal", "Unknown"] as const;
+/// `Provisioning` is Phase M's "the device told us it exists and has nothing
+/// working on it yet" — a configuration problem, not a radio one, and it is
+/// deliberately not counted as Online anywhere.
+export const DEVICE_STATUSES = [
+  "Online",
+  "Offline",
+  "Low Signal",
+  "Provisioning",
+  "Unknown",
+] as const;
 
 export const BILLING_CYCLES = ["Weekly", "Bi-weekly", "Monthly", "Quarterly", "Yearly"] as const;
 
@@ -244,6 +253,8 @@ export const STATUS_STYLES: Record<string, string> = {
   Online: "bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400",
   Offline: "bg-slate-100 text-slate-600 ring-slate-500/20 dark:bg-slate-500/10 dark:text-slate-400",
   "Low Signal": "bg-orange-50 text-orange-700 ring-orange-600/20 dark:bg-orange-500/10 dark:text-orange-400",
+  Provisioning:
+    "bg-violet-50 text-violet-700 ring-violet-600/20 dark:bg-violet-500/10 dark:text-violet-400",
   Unknown: "bg-slate-100 text-slate-600 ring-slate-500/20 dark:bg-slate-500/10 dark:text-slate-400",
   // billing
   Paid: "bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400",

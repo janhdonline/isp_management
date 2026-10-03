@@ -23,7 +23,14 @@ const PUBLIC_PATHS = [
  * account here, and putting a staff session check in front of a callback means
  * every online payment is rejected and the failure looks like a provider outage.
  */
-const TOKEN_PATHS = ["/api/cron", "/api/webhooks"];
+/**
+ * The TR-069 ACS endpoint. A CPE has no account here and no cookie, so this is a
+ * token path rather than a session path — and it authenticates with its own
+ * shared secret rather than `CRON_SECRET`, because it is a different caller with
+ * a different credential. See the route for why the secret comparison there is
+ * constant-time.
+ */
+const TOKEN_PATHS = ["/api/cron", "/api/webhooks", "/api/acs"];
 
 /**
  * The customer portal, authenticated by its own cookie and its own guard.
