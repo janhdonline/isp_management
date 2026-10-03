@@ -10,6 +10,7 @@ const JOBS = [
   "enforcement",
   "collection",
   "network",
+  "olts",
   "devices",
   "faults",
   "usage",

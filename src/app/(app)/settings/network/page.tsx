@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { getSettings } from "@/lib/settings";
+import { getSettings, redactSecrets } from "@/lib/settings";
 import { prisma } from "@/lib/prisma";
 import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import { SettingsForm, TestButton, type SettingField } from "@/components/settings/settings-form";
@@ -78,7 +78,7 @@ export default async function NetworkSettingsPage() {
         actions={<TestButton action={testMikrotikAction} label="Test MikroTik" />}
       />
       <PageContainer className="max-w-4xl">
-        <SettingsForm fields={FIELDS} values={settings} title="Device integrations" description="Each integration is consumed through a service adapter, never directly from the UI." />
+        <SettingsForm fields={FIELDS} values={redactSecrets(settings)} title="Device integrations" description="Each integration is consumed through a service adapter, never directly from the UI." />
 
         <Card className="mt-4">
           <CardBody>

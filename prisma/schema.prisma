@@ -595,6 +595,21 @@ model Olt {
   area       Area?    @relation(fields: [areaId], references: [id], onDelete: SetNull)
   ponPorts   Int      @default(0)
   status     String   @default("Unknown") // Online | Offline | Unknown
+  /// Which adapter speaks to this OLT: `snmp-huawei`, `snmp-bdcom`,
+  /// `snmp-vsol`. Null means nobody polls this cabinet, which is different from
+  /// polling it and finding it unreachable — one is a choice, the other is a fault.
+  apiVendor  String?
+  /// **Whether** an SNMP community is configured for this OLT, never the community
+  /// itself — the same write-only shape as `Router.apiSecretEnc`. The value lives
+  /// in an `isSecret` Settings row, so no select on this model can put it in a log,
+  /// an export or a response.
+  snmpCommunityEnc Boolean @default(false)
+  snmpPort   Int      @default(161)
+  /// Why the last poll failed. An OLT we could not reach is recorded as `Unknown`,
+  /// never `Offline`: the difference is "we have not heard from it" and "it said
+  /// it is down", and only one of those is worth paging anybody for. Its ONUs are
+  /// left exactly as they were.
+  lastError  String?
   lastSyncAt DateTime?
   /// Where the OLT cabinet stands. Used as the map pin for a fiber incident when
   /// nothing more precise is known, so a technician is sent to the site rather
@@ -609,8 +624,47 @@ model Olt {
   /// Fiber runs leaving this OLT, drawn on the map as the actual route rather
   /// than a straight line between two markers.
   fiberRoutes FiberRoute[]
+  /// Serials this OLT is serving that we have no customer for.
+  rogueOnus   RogueOnu[]
 
   @@index([status])
+}
+
+/// A serial the OLT is serving that is not in our database.
+///
+/// Someone has plugged in their own equipment. That is a billing and security
+/// question before it is a technical one, so it is recorded rather than ignored:
+/// an unregistered ONU is somebody's traffic nobody is paying for.
+///
+/// The `@@unique` on `(oltId, serialNo)` is the claim, not just a guard. A sync
+/// runs from three schedulers in this deployment and an operator will also press
+/// the button by hand, so "have we seen this serial" is a check two of them can
+/// both pass. `dedupeKey` is a second claim, held only while the rogue is
+/// unresolved, so an alert goes out once per incident and again if a cleaned-up
+/// serial reappears.
+model RogueOnu {
+  id        String   @id @default(cuid())
+  oltId     String
+  olt       Olt      @relation(fields: [oltId], references: [id], onDelete: Cascade)
+  serialNo  String
+  ponIndex  String?
+  rxPower   Float?
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+  /// Set when somebody removed it from the OLT. A resolved row is history; an
+  /// unresolved one is a problem.
+  resolvedAt DateTime?
+  /// `rogue:{oltId}:{serialNo}`, held only while unresolved. Nulled on resolve for
+  /// the reason `DeviceAlert.dedupeKey` is: leaving it would make the index reject
+  /// the next sighting of a serial that was cleaned up and came back.
+  dedupeKey String?  @unique
+  /// Whether anyone was told. A rogue ONU nobody heard about is a different thing
+  /// from one they were.
+  notifiedAt DateTime?
+
+  @@unique([oltId, serialNo])
+  @@index([resolvedAt])
+  @@index([serialNo])
 }
 
 /// One fiber run, as the crew walked it.

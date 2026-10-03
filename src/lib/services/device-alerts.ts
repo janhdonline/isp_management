@@ -47,7 +47,13 @@ const CHANNEL_NAMES: Record<string, string> = {
   email: "Email",
 };
 
-export type DeviceKind = "Down" | "Recovered" | "LowSignal";
+/**
+ * `Rogue` is Phase N's: a serial the OLT is serving that is not in our database.
+ * It goes through this file rather than its own alerting because the exactly-once
+ * machinery — `dedupeKey`, the unique claim, notifying only on the insert that
+ * created the row — is here and does not need a second implementation.
+ */
+export type DeviceKind = "Down" | "Recovered" | "LowSignal" | "Rogue";
 export type DeviceType = "Router" | "OLT" | "ONU";
 
 /** The key that keeps one incident to one alert. */
@@ -89,7 +95,9 @@ export async function notify(
   const body =
     kind === "Recovered"
       ? `✅ RECOVERED — ${deviceLabel} is back online.\n${detail}`
-      : `🚨 ${kind.toUpperCase()} — ${deviceLabel}\n${detail}`;
+      : kind === "Rogue"
+        ? `\u{1F6A8} UNREGISTERED ONU — ${deviceLabel}\n${detail}`
+        : `🚨 ${kind.toUpperCase()} — ${deviceLabel}\n${detail}`;
 
   const configured = await isChannelConfigured(channel);
   if (!configured) {

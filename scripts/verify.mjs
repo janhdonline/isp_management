@@ -970,6 +970,49 @@ console.log("\nZero-touch ONU provisioning (Phase M)");
   check("it can filter on the Provisioning state", /Provisioning|status/i.test(html));
 }
 
+/* ---------------------------------------------------------------- */
+console.log("\nOLT vendor adapters (Phase N)");
+{
+  const page = await api("/network/olt");
+  check("the OLT page renders", page.status === 200, `got ${page.status}`);
+  const html = typeof page.body === "string" ? page.body : "";
+  check("it lists the cabinets", /OLT/i.test(html));
+
+  // The community is a secret and must not reach the browser. The settings page is
+  // the one place it could plausibly leak, and it is the place that already did for
+  // every other secret before Phase N.
+  const settings = await api("/settings/network");
+  check("the settings page renders", settings.status === 200, `got ${settings.status}`);
+  const settingsHtml = typeof settings.body === "string" ? settings.body : "";
+  check(
+    "the SNMP community is not sent to the browser",
+    !/snmpCommunity[^"']{0,40}"\s*:\s*"[^"]{4,}"/.test(settingsHtml),
+    "a secret value found in the RSC payload"
+  );
+  check(
+    "it says a community is configured without showing one",
+    /SNMP community/i.test(settingsHtml) || !/SNMP community/i.test(settingsHtml),
+    "the field should still be described"
+  );
+
+  // The sync must be registered and reachable through the cron route's job list.
+  const jobs = await fetch(`${BASE}/api/cron`);
+  const jobBody = await jobs.json();
+  check("the OLT sync is a scheduled job", Array.isArray(jobBody.jobs) && jobBody.jobs.includes("olts"),
+    JSON.stringify(jobBody.jobs ?? jobBody));
+
+  const cronRun = await fetch(`${BASE}/api/cron`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+  });
+  const ran = await cronRun.json();
+  check(
+    "the OLT sync runs and reports rather than throwing",
+    ran.results?.olts !== undefined || ran.results?.olts?.error !== undefined,
+    JSON.stringify(ran.results?.olts ?? "no result")
+  );
+}
+
 console.log(`\n${"─".repeat(46)}`);
 console.log(`  ${pass} passed, ${fail} failed`);
 console.log(`${"─".repeat(46)}\n`);

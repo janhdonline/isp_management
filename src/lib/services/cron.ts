@@ -705,6 +705,18 @@ export async function deviceHealthWatchJob(): Promise<JobResult> {
 }
 
 /**
+ * Polls every configured OLT over its vendor adapter and folds the readings in
+ * (Phase N).
+ *
+ * Sits immediately before `devices`, so the health watch that follows compares
+ * against the status this sync just wrote rather than racing it.
+ */
+export async function syncOltJob(): Promise<JobResult> {
+  const { syncOlts } = await import("@/lib/services/olt-sync");
+  return syncOlts();
+}
+
+/**
  * Turns a dead OLT or a dead PON port into an affected-customer list, one bulk
  * ticket and one message batch (Phase L).
  *
@@ -769,6 +781,7 @@ export async function runAllJobs() {
     enforcement: retryNetworkActions,
     collection: collectPayments,
     network: syncNetwork,
+    olts: syncOltJob,
     devices: deviceHealthWatchJob,
     faults: localizeFaultsJob,
     usage: aggregateDailyUsage,

@@ -41,6 +41,30 @@ export async function saveSettings(entries: { key: string; value: string }[]) {
   cache = null;
 }
 
+/**
+ * The settings a browser is allowed to see.
+ *
+ * `getSettings()` returns every value in plaintext, and the settings pages used to
+ * hand the whole map to a `"use client"` form. The password inputs rendered empty,
+ * which looked like masking and was not: the plaintext was still in the RSC flight
+ * payload, readable in React DevTools or by anyone who pastes the payload into a
+ * decoder. That was true of every secret in the system — the RADIUS secret, the
+ * MikroTik password, the payment gateway key — before Phase N added the SNMP
+ * community to the list, and adding a secret to a known leak is not something to
+ * do quietly.
+ *
+ * So this is the function the UI calls. A secret's value is replaced by
+ * {@link maskSecret}, which preserves only *whether* one is set — the settings form
+ * needs exactly that much to render "Saved. Leave blank to keep the current value."
+ */
+export function redactSecrets(all: Record<string, string>): Record<string, string> {
+  const safe: Record<string, string> = {};
+  for (const [key, value] of Object.entries(all)) {
+    safe[key] = SECRET_KEYS.includes(key) && value ? maskSecret(value) : value;
+  }
+  return safe;
+}
+
 export function invalidateSettingsCache() {
   cache = null;
 }
@@ -212,6 +236,23 @@ export const DEFAULT_SETTINGS: {
   { key: "network.oltPort", value: "8080", group: "Network" },
   { key: "network.oltUsername", value: "admin", group: "Network" },
   { key: "network.oltPassword", value: "", group: "Network", isSecret: true },
+  /// Phase N. The SNMP read community used to poll OLTs.
+  ///
+  /// A secret because anyone holding it can read the subscriber list, the
+  /// configured SSIDs and every ONU serial on the OLT — and from there, usually,
+  /// a way to write to it. Kept out of the Olt row on purpose: the row records
+  /// only *that* a community is configured (`snmpCommunityEnc`), exactly as
+  /// `Router.apiSecretEnc` does, so no code path can select it and put it in a log.
+  { key: "network.snmpCommunity", value: "", group: "Network", isSecret: true },
+  /// Per-vendor overrides, for the common case of one community per supplier.
+  { key: "network.snmpCommunity.huawei", value: "", group: "Network", isSecret: true },
+  { key: "network.snmpCommunity.bdcom", value: "", group: "Network", isSecret: true },
+  { key: "network.snmpCommunity.vsol", value: "", group: "Network", isSecret: true },
+  /// The OID map per vendor, as JSON. See `src/lib/olt/oid-maps.ts` for the shape
+  /// and for why these are configuration and not code.
+  { key: "network.olt.oidMap.huawei", value: "", group: "Network" },
+  { key: "network.olt.oidMap.bdcom", value: "", group: "Network" },
+  { key: "network.olt.oidMap.vsol", value: "", group: "Network" },
   { key: "network.defaultIpPool", value: "100.64.10.2-100.64.10.250", group: "Network" },
   { key: "network.defaultRouter", value: "Core-R1", group: "Network" },
   { key: "network.defaultPackage", value: "", group: "Network" },

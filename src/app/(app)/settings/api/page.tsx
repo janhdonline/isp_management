@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { getSettings } from "@/lib/settings";
+import { getSettings, redactSecrets } from "@/lib/settings";
 import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import { SettingsForm, TestButtons, type SettingField } from "@/components/settings/settings-form";
 import { testSmsProviderAction } from "@/app/(app)/accounts/actions";
@@ -74,7 +74,7 @@ export default async function ApiSettingsPage() {
         <div className="mt-4">
           <SettingsForm
             fields={FIELDS}
-            values={settings}
+            values={redactSecrets(settings)}
             title="Provider credentials"
             description="After saving, secret values are masked and can only be replaced, never read back."
           />

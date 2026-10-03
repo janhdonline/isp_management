@@ -4,6 +4,7 @@ import { listExpiring } from "@/lib/services/customers";
 import { DashboardView, type DashStats } from "./dashboard-view";
 import { DeviceAlertBanner } from "@/components/network/device-alert-banner";
 import { listAlerts } from "@/lib/services/device-alerts";
+import { listRogueOnus, openRogueCount } from "@/lib/services/olt-sync";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Dashboard" };
@@ -18,12 +19,17 @@ export default async function DashboardPage({
   const from = typeof sp.from === "string" ? sp.from : undefined;
   const to = typeof sp.to === "string" ? sp.to : undefined;
 
-  const [stats, charts, expiring, openAlerts] = await Promise.all([
+  const [stats, charts, expiring, openAlerts, rogues, rogueCount] = await Promise.all([
     getDashboardStats(),
     getDashboardCharts(range, from, to),
     listExpiring({ window: "month", perPage: 8 }),
     // Only the banner, so the dashboard does not carry the whole alert history.
     listAlerts({ status: "Open", take: 6 }),
+    // Phase N. Serials the OLT is serving that nobody is billing for. A handful, so
+    // the dashboard carries a list a person can act on rather than a count that
+    // could be in the hundreds.
+    listRogueOnus({ take: 5 }),
+    openRogueCount(),
   ]);
 
   // BigInt is not serialisable across the server/client boundary.
@@ -57,7 +63,23 @@ export default async function DashboardPage({
         notifiedAt: a.notifiedAt?.toISOString() ?? null,
         notifyError: a.notifyError,
       }))} />
-      <DashboardView stats={view} charts={charts} range={range} from={from} to={to} />
+      <DashboardView
+        stats={view}
+        charts={charts}
+        range={range}
+        from={from}
+        to={to}
+        rogues={rogues.map((r) => ({
+          id: r.id,
+          serialNo: r.serialNo,
+          ponIndex: r.ponIndex,
+          rxPower: r.rxPower,
+          oltName: r.olt.name,
+          lastSeenAt: r.lastSeenAt.toISOString(),
+          notified: Boolean(r.notifiedAt),
+        }))}
+        rogueCount={rogueCount}
+      />
     </>
   );
 }

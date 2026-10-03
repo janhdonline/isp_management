@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { getSettings } from "@/lib/settings";
+import { getSettings, redactSecrets } from "@/lib/settings";
 import { isChannelConfigured } from "@/lib/services/messaging";
 import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import { SettingsForm, type SettingField } from "@/components/settings/settings-form";
@@ -77,7 +77,7 @@ export default async function ReminderSettingsPage() {
       <PageContainer className="max-w-4xl">
         <SettingsForm
           fields={FIELDS}
-          values={settings}
+          values={redactSecrets(settings)}
           title="Automatic reminders"
           description="The scheduled job reads these. Changing them takes effect on the next run, and never re-sends a reminder that has already gone out."
         />

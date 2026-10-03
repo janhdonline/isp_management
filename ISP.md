@@ -1796,6 +1796,130 @@ it was rejected.
 
 ------------------------------------------------------------------------
 
+## 37. OLT Vendor Adapter Framework
+
+Every OLT row was manual entry. `network-sync.ts` had zero references to an OLT, no
+vendor API code existed anywhere, and so the real signal levels were unknown: nobody
+could say whether a subscriber at -29 dBm was degrading or fine, because the number
+was never read off the equipment. And a customer who plugged in their own ONU was
+invisible — connected, carrying traffic, and nobody's customer.
+
+### The same seam as the router, one level up
+
+`NetworkAdapter` exists because MikroTik is one vendor among several. `OltAdapter`
+is the same argument with more force: Huawei, BDCom and VSOL do not merely differ in
+commands, they differ in **where the information is**. The shape is identical —
+`discoverOnus`, `getOnuSignal`, `listPonPorts`, `authorizeOnu`, `deauthorizeOnu`,
+`rebootOnu` — and nothing above it learns a vendor name.
+
+Each adapter carries a `live` flag. The stand-in used when a cabinet has no vendor or
+no community throws from every method rather than returning empty results, because an
+empty `discoverOnus()` is indistinguishable from a real OLT with nothing on it — and
+the sync would happily mark every subscriber behind that cabinet offline.
+
+### The MIB layout is configuration, not code
+
+Those numbers belong to a model running a firmware, not to this application, and
+both Huawei and BDCom have moved subtrees between firmware revisions. Hardcoding them
+means an upgrade silently reads the wrong OIDs, and wrong OIDs return **plausible
+garbage** rather than an error: a serial index that reads as an empty string, an rx
+power that comes back as 0. So each map lives in Settings as JSON, merged field by
+field over a default, and an invalid override is dropped *and named* — a silently
+ignored typo is how somebody spends an afternoon wondering why their override did
+nothing. The shipped defaults are placeholders and are documented as such.
+
+The one thing that is not configuration is the ONU state table: those integers are
+assigned by the GPON standard and every vendor implements them identically. An
+*unrecognised* value is `Unknown`, never guessed — a vendor-specific code turned into
+`Offline` would mass-disconnect subscribers whose ONUs are perfectly healthy but
+report a code the table has not been taught.
+
+### Signal is correlated by the OID suffix, not by row order
+
+The four leaf OIDs are columns of one table. Reading them positionally — row N of the
+serial column pairs with row N of the rx column — is the bug that shows four
+subscribers' light levels shuffled between them, every value plausible and every one
+wrong. The driver keys on the index in the OID suffix. The fake OLT deliberately
+answers its columns in opposite orders so this is actually tested.
+
+**9999 and -9999 are "no reading"**, not levels. Stored as read, an ONU that has
+never transmitted looks impossibly healthy and never trips the low-signal alert.
+
+### What a sync may write, and what it may never write
+
+Five fields: `rxPower`, `txPower`, `status`, `ponIndex`, `lastSeenAt`. The OLT is the
+authority on those five and on nothing else.
+
+`serialNo` is the join key and is never rewritten. `vendor`, `model`, `name` and the
+`Customer.onuId` link are not the OLT's to set: a Phase M ONU checked in over TR-069
+with a real vendor and model, and a sync that let the cabinet restate them would
+slowly replace what somebody verified with whatever the firmware claims. The customer
+link especially — a row whose serial matches but whose customer is set must keep that
+customer, or a reconnect would silently detach a subscriber from their own account.
+
+The rule is enforced by the shape of the update, not by remembering to leave fields
+out of a wider object spread.
+
+### An unreachable OLT is not an empty one
+
+This is the whole point of the module, and `syncRouters` established the principle
+for routers. A cabinet we cannot reach is recorded as **`Unknown`** with the reason
+on `lastError`, `lastSyncAt` does not advance, and **not one ONU row is written**.
+
+It matters more now than it did for routers. Phase L's fault localization takes an
+offline OLT as a trigger and opens a bulk ticket with an SMS batch to every customer
+behind it. "The cabinet did not answer" would page the entire base of an exchange on
+a dropped management VLAN.
+
+### An unknown serial is a problem, not an ONU
+
+**The sync never creates an `Onu` row.** An earlier draft did, and the count of
+created rows came back zero every time for a reason that took a moment to see: every
+serial it did not recognise went to the rogue path instead. The two behaviours cannot
+coexist — auto-creating would make rogue detection unreachable — and auto-creating
+would be the wrong answer anyway. Auto-registering unmanaged hardware would put it
+into the fault-localization path, the fiber map and every device count, with no
+customer behind it, no PPPoE secret and nobody to answer for it. A silent row is far
+worse than an alert.
+
+So an unknown serial is recorded in `RogueOnu`, alerted exactly once, shown on the
+dashboard, and left there until a person decides. Bringing it into service is a
+deliberate act: link it to a customer, and the next sync adopts it.
+
+**One record per serial per OLT, for ever.** A resolved rogue that comes back is
+*reopened* — same row, `resolvedAt` cleared, the key taken again, a new alert — rather
+than inserted twice. Retaining the key would mean a cleaned-up serial that somebody
+reconnects is never alerted about again, silently and for ever.
+
+### Two security defects fixed on the way, because this phase would have tripped both
+
+Both pre-existing, both found while adding `network.snmpCommunity` as a secret:
+
+  - **Secret settings values were sent to the browser in plaintext.** `getSettings()`
+    returns everything, and six settings pages handed the whole map to a `"use client"`
+    form. The password inputs rendered empty, which looked like masking and was not:
+    the values were in the RSC flight payload. That was true of the RADIUS secret, the
+    MikroTik password and the payment gateway key before this phase. `redactSecrets()`
+    is now what the UI calls.
+  - **Saving the settings page erased every secret.** The inputs submit
+    `defaultValue=""` with a hint promising "leave blank to keep the current value",
+    and the action upserted whatever arrived. Changing one non-secret setting wiped
+    the RADIUS secret and the payment credentials. Blank now means blank.
+
+### The community is a write-only marker
+
+`Olt.snmpCommunityEnc` is a **boolean**, mirroring `Router.apiSecretEnc`. The
+community lives in an `isSecret` Settings row, so no select on `Olt` — in the
+dashboard, an export, a log line or an API response — can produce it. `safeConfig()`
+is the single place an adapter describes itself for a log, and the community is absent
+from it.
+
+Write operations use a separate session from reads, so a read can never inherit write
+authority by accident. And `deauthorizeOnu` cuts a customer's line: it is never
+called by a sync, because that belongs to a person deciding to.
+
+------------------------------------------------------------------------
+
 ## Final Requirement
 
 The final UI must feel like **one unified ISP operating system**, not

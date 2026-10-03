@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { getSettings } from "@/lib/settings";
+import { getSettings, redactSecrets } from "@/lib/settings";
 import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import { SettingsForm, type SettingField } from "@/components/settings/settings-form";
 
@@ -31,7 +31,7 @@ export default async function GeneralSettingsPage() {
         breadcrumb={[{ label: "Settings", href: "/settings" }]}
       />
       <PageContainer className="max-w-4xl">
-        <SettingsForm fields={FIELDS} values={settings} title="Company & locale" description="These values appear on invoices, receipts and SMS messages." />
+        <SettingsForm fields={FIELDS} values={redactSecrets(settings)} title="Company & locale" description="These values appear on invoices, receipts and SMS messages." />
       </PageContainer>
     </>
   );

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
-import { getSettings } from "@/lib/settings";
+import { getSettings, redactSecrets } from "@/lib/settings";
 import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import { StatCard, StatCardGrid } from "@/components/ui/stat-card";
 import { SettingsForm, BackupNowButton, SettingField } from "@/components/settings/settings-form";
@@ -60,7 +60,7 @@ export default async function BackupSettingsPage({
         </StatCardGrid>
 
         <div className="mt-4">
-          <SettingsForm fields={FIELDS} values={settings} title="Schedule" description="Automatic snapshots run on the configured schedule and are pruned to the retention count." />
+          <SettingsForm fields={FIELDS} values={redactSecrets(settings)} title="Schedule" description="Automatic snapshots run on the configured schedule and are pruned to the retention count." />
         </div>
 
         <Card className="mt-4">

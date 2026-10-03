@@ -153,7 +153,28 @@ export async function saveSettingsAction(
   }
   if (entries.length === 0) return { formError: "Nothing to save." };
 
-  await saveSettings(entries);
+  // A blank password field means "leave it alone", not "set it to empty".
+  //
+  // Every secret input renders with `defaultValue=""` and a "Saved. Leave blank
+  // to keep the current value." hint, but the action used to upsert whatever came
+  // through — so saving the page to change one non-secret setting silently wiped
+  // the RADIUS secret, the MikroTik password and every stored provider token. The
+  // hint promised the opposite of what the code did, which is worse than no hint.
+  const { isSecretKey, getSettings } = await import("@/lib/settings");
+  const keep: { key: string; value: string }[] = [];
+  const writes: { key: string; value: string }[] = [];
+  for (const entry of entries) {
+    if (entry.value !== "" || !(await isSecretKey(entry.key))) {
+      writes.push(entry);
+      continue;
+    }
+    const current = (await getSettings())[entry.key];
+    // A blank field on a secret that was never set is a genuine "clear it".
+    if (current) keep.push(entry);
+  }
+
+  await saveSettings(writes);
+  if (!writes.length && !keep.length) return { formError: "Nothing to save." };
   revalidatePath("/settings");
   return { success: "Settings saved." };
 }

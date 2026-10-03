@@ -12,7 +12,7 @@ import { formatCurrency, formatNumber, formatDate, relativeTime, daysUntil } fro
 import {
   Activity, AlertTriangle, ArrowRight, Banknote, CalendarClock, CircleDollarSign,
   FilePlus2, Package, RefreshCcw, TrendingUp, Ticket, UserPlus, Users, Wallet,
-  Wifi, WifiOff, PauseCircle,
+  Wifi, WifiOff, PauseCircle, ShieldAlert,
 } from "lucide-react";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -62,18 +62,33 @@ function GroupLabel({ children }: { children: React.ReactNode }) {
   return <h2 className="text-xs font-semibold uppercase tracking-[0.08em] text-pine-700 dark:text-fg-muted">{children}</h2>;
 }
 
+/** A serial the OLT is serving that nobody is billing for (Phase N). */
+export type RogueEntry = {
+  id: string;
+  serialNo: string;
+  ponIndex: string | null;
+  rxPower: number | null;
+  oltName: string;
+  lastSeenAt: string;
+  notified: boolean;
+};
+
 export function DashboardView({
   stats,
   charts,
   range,
   from,
   to,
+  rogues = [],
+  rogueCount = 0,
 }: {
   stats: DashStats;
   charts: DashCharts;
   range: string;
   from?: string;
   to?: string;
+  rogues?: RogueEntry[];
+  rogueCount?: number;
 }) {
   const c = stats.cards;
   const [rangeValue, setRangeValue] = useState(range);
@@ -247,8 +262,52 @@ export function DashboardView({
           <StatCard label="Expired" value={formatNumber(c.expired)} icon={AlertTriangle} tone="danger" href="/customers/status/expired" hint="Past expiry date" />
           <StatCard label="Suspended" value={formatNumber(c.suspended)} icon={PauseCircle} tone="warning" href="/customers/status/suspended" hint="Awaiting payment" />
           <StatCard label="Open Tickets" value={formatNumber(c.openTickets)} icon={Ticket} tone="info" href="/support/tickets" hint="Open, pending, in progress" />
+          <StatCard
+            label="Unregistered ONUs"
+            value={formatNumber(rogueCount)}
+            icon={ShieldAlert}
+            tone={rogueCount > 0 ? "danger" : "success"}
+            href="/network/olt"
+            hint={
+              rogueCount > 0
+                ? "Seen on an OLT, in no customer record"
+                : "Every ONU on every cabinet is ours"
+            }
+          />
         </StatCardGrid>
       </section>
+
+      {rogues.length > 0 ? (
+        <section className="space-y-2 animate-rise" style={{ animationDelay: "160ms" }}>
+          <GroupLabel>Unregistered ONUs</GroupLabel>
+          <ul className="space-y-1">
+            {rogues.map((r) => (
+              <li
+                key={r.id}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+              >
+                <span className="font-mono text-xs">{r.serialNo}</span>
+                <span className="text-fg-muted">{r.oltName}</span>
+                {r.ponIndex ? (
+                  <span className="text-xs text-fg-subtle">PON {r.ponIndex}</span>
+                ) : null}
+                {r.rxPower != null ? (
+                  <span className="tnum text-xs text-fg-subtle">rx {r.rxPower.toFixed(1)} dBm</span>
+                ) : null}
+                <span className="ml-auto text-xs text-fg-subtle">
+                  {r.notified ? "alert sent" : "not alerted"} · last seen{" "}
+                  {new Date(r.lastSeenAt).toISOString().replace("T", " ").slice(0, 16)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-fg-muted">
+            These are connected and carrying traffic, but they are in nobody&apos;s account.
+            Link one to a customer and the next sync adopts it; nobody does and the OLT
+            is the one place the ISP learns about it.
+          </p>
+        </section>
+      ) : null}
 
       {/* charts */}
       <section className="space-y-2 animate-rise" style={{ animationDelay: "180ms" }}>
