@@ -2268,6 +2268,131 @@ once, with nobody watching, is how a router becomes slow on a Tuesday afternoon.
 
 ------------------------------------------------------------------------
 
+## 41. Prorated Billing on Mid-Cycle Package Change
+
+Changing a customer's package swapped `packageId` and `monthlyBill` and stopped. A
+customer who upgraded on the 20th was billed as if they had been on the new package
+for the whole month — so they were overcharged by ten days' difference, or the ISP
+quietly absorbed it and every mid-month upgrade was a small loss nobody could see.
+
+## Exactly 166.67, and why that word is the requirement
+
+A day-20 change on a 30-day cycle, 500 to 1000, is 500 × 10/30 = **166.666…**. The
+requirement says *exactly* 166.67, and that is a claim about **determinism**, not
+about approximation.
+
+Every money column in this application is a `Float`, because that is what was there
+before this phase. That is a storage and display decision; it is not an arithmetic
+one. Floats cannot represent 166.67, so:
+
+    (500 * 10) / 30   ===  166.66666666666669
+    (500 / 30) * 10   ===  166.66666666666663
+
+Both are "500 × 10 / 30", and they are different doubles. Whether an ISP is owed
+166.66 or 166.67 should not depend on how somebody parenthesised an expression
+three functions ago.
+
+So the arithmetic runs on **integer poisha** (hundredths) end to end, with one
+explicit rounding at the end:
+
+    divRoundHalfAwayFromZero(50000 × 10, 30)  ===  16667  →  166.67
+
+Every value inside that expression is an integer, so no rounding happens before the
+one that is intended. The rounding is **half away from zero**, symmetric for
+charges and credits, so a downgrade is never a poisha out from its mirror.
+
+Conversion is the other place floats have bitten people: `500.07 * 100` is
+`50006.99999999999` in binary floating point, and flooring that is a poisha short on
+every amount with a fraction. `toPoisha` rounds rather than multiplies.
+
+## The swap and the money are one fact
+
+There is **no commit between them**. If the invoice failed after the customer had
+been moved, the ISP would have sold a month at the new price and billed nothing for
+it; if the swap failed after the invoice was raised, the customer would have been
+invoiced for a package they did not have. Neither is a state a database should be
+able to hold, so a failure rolls both back — and a test asserts exactly that by
+forcing a failure after the swap.
+
+## An upgrade is an invoice; a downgrade is a credit
+
+Money **owed** is an invoice: it can be chased, reported on, and paid through the
+normal paths. Money owed **to** a customer is a wallet credit, and it goes through
+Phase G's `adjust()` → `post()` ledger writer, which is the single writer and takes
+its own `SELECT … FOR UPDATE`. `advancePayment` is never written directly — it is a
+derived balance, and the ledger is the record that has to agree with it.
+
+**A negative invoice is never raised.** It reads as a credit on the statement, it
+inflates the invoice count, and it is a thing collection software does not know
+what to do with.
+
+An upgrade invoice is **due on the day of the change**, not at the end of the
+month. The customer has already had the faster speed; a proration invoice dated
+today and due next month would be a debt they have not incurred.
+
+## The order of the gates
+
+The speeds are checked **after** the suspension check, deliberately: removing
+something needs no numbers, so a customer suspended on a half-filled-in package
+still has their credit taken away. And an adjustment that rounds to **exactly zero**
+raises nothing at all — an invoice for 0.00 is worse than no invoice, because it is
+a row in the receivables report and a thing to chase.
+
+A customer with no previous package is a **new subscription**, not a change of
+price, so nothing is prorated.
+
+## Same price is not a chargeable change
+
+Two packages at the same monthly price differ in ways that are not money — FUP
+allowance, profile, priority — and a customer moving between them has been
+shortchanged, not overcharged. No invoice, no credit, just the swap.
+
+## The cycle has to be the same one FUP measures
+
+The window is the customer's latest invoice's `billingFrom`/`billingTo`, falling
+back to the package validity period. That is deliberately **the same rule
+`cycleWindow()` in `fup.ts` uses**: if usage and proration disagreed about where
+the month is, a customer near their limit would be prorated against a different
+window from the one their usage was measured over.
+
+The elapsed count is clamped to the window, so a backdated edit prorates against a
+real position in the cycle rather than producing a negative or absurd number.
+
+## A backdated change is a parameter, not a `new Date()`
+
+`changePackage` takes `changedAt`, defaulting to now. An operator correcting a
+mistake made on the 1st while entering it on the 3rd should be prorated against the
+1st — and a test cannot assert a day-20 figure without it.
+
+## The switch, and why it is on by default
+
+`billing.prorateOnPackageChange`, default **true**. Off restores the old swap-only
+behaviour exactly, which is occasionally the policy an ISP actually wants: some bill
+on the package held at the start of the month and treat a mid-month change as
+effective next cycle. That is a choice, not an oversight, so both are available.
+
+## What the customer sees
+
+The proration note is a **block**, not a sentence, and the invoice page renders it
+preformatted so the arithmetic lines up:
+
+```
+Package change, prorated over the rest of the billing cycle.
+From: Home 5 Mbps — 500.00 per month
+To: Home 10 Mbps — 1000.00 per month
+Cycle: 30 days, 2026-07-01 to 2026-07-31
+Already served on the old package: 20 day(s)
+Remaining on the new package: 10 day(s)
+Daily rate difference: 16.67 per day
+Adjustment: 10 x 16.67 = 166.67
+```
+
+For a **downgrade** every figure is signed — `-16.67 per day`, `-166.67` — because
+a credit is money going the other way and reading it as positive would be
+misleading.
+
+------------------------------------------------------------------------
+
 ## Final Requirement
 
 The final UI must feel like **one unified ISP operating system**, not

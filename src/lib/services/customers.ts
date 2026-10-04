@@ -4,7 +4,9 @@ import { returnEquipment } from "@/lib/services/inventory";
 import { Prisma } from "@/generated/prisma/client";
 import { DEFAULT_PER_PAGE, ListParams, ListResult } from "@/lib/query";
 import { addDays, round2, startOfDay } from "@/lib/utils";
-import { recomputeCustomerBilling } from "./billing";
+import { recomputeCustomerBilling, createInvoice } from "./billing";
+import { prorate } from "./proration";
+import { getSettings } from "@/lib/settings";
 import { Tx } from "@/lib/counter";
 import { prismaLog, logActivity } from "./activity";
 
@@ -462,16 +464,59 @@ export async function disconnectCustomer(
   return c;
 }
 
+/**
+ * Moves a customer to another package, and settles the difference for the part of
+ * the month already served (Phase R).
+ *
+ * ## Why the adjustment is in the same transaction
+ *
+ * The swap and the money are one fact, not two. If the invoice failed after the
+ * customer had been moved, the ISP would have sold a month at the new price and
+ * billed nothing for it; if the swap failed after the invoice was raised, the
+ * customer would have been invoiced for a package they did not have. Neither is a
+ * state any database should be able to hold, so there is no commit between them
+ * and a failure rolls both back.
+ *
+ * ## Why an upgrade is an invoice and a downgrade is a credit
+ *
+ * An upgrade means the customer owes money now, and an invoice is how money owed
+ * is recorded — it can be chased, reported on, and paid through the normal paths.
+ * A **negative invoice is never raised**: it reads as a credit on the statement, it
+ * inflates the invoice count, and it is a thing collection software does not know
+ * what to do with. So a downgrade credits the wallet through Phase G's ledger
+ * writer, which is where money owed *to* a customer belongs.
+ *
+ * ## A same-price change is not a change worth charging for
+ *
+ * Two packages at the same monthly price differ in ways that are not money — FUP
+ * allowance, profile, priority — and a customer moving between them has been
+ * shortchanged, not overcharged. No invoice, no credit, just the swap.
+ */
 export async function changePackage(
   tx: Tx,
   id: string,
   packageId: string,
   reason: string,
-  userId?: string
+  userId?: string,
+  /**
+   * When the change actually took effect. Defaults to now.
+   *
+   * A parameter rather than a `new Date()` buried in the body, for two reasons: an
+   * operator correcting a mistake made on the 1st while entering it on the 3rd should
+   * be prorated against the 1st, and a test cannot assert a day-20 figure without
+   * freezing the clock.
+   */
+  changedAt?: Date
 ) {
   const pkg = await tx.package.findUniqueOrThrow({ where: { id: packageId } });
-  const before = await tx.customer.findUniqueOrThrow({ where: { id } });
+  const before = await tx.customer.findUniqueOrThrow({
+    where: { id },
+    include: { package: { select: { id: true, name: true, monthlyPrice: true, validityDays: true } } },
+  });
   if (before.packageId === packageId) return before;
+
+  const settings = await getSettings();
+  const prorate = settings["billing.prorateOnPackageChange"] !== "false";
 
   const c = await tx.customer.update({
     where: { id },
@@ -481,6 +526,7 @@ export async function changePackage(
       installationFee: pkg.installationFee,
     },
   });
+
   await tx.customerPackageChange.create({
     data: {
       customerId: id,
@@ -490,18 +536,157 @@ export async function changePackage(
       changedById: userId,
     },
   });
+
+  // Prorated before the swap is written to the log, so the audit line can say what
+  // the change cost rather than just that it happened.
+  const settled = prorate
+    ? await settlePackageChange(tx, {
+        customer: c,
+        from: before.package,
+        to: pkg,
+        now: changedAt ?? new Date(),
+        createdById: userId ?? null,
+      })
+    : null;
+
   await prismaLog(
     tx,
     {
       action: "Change Package",
       entity: "Customer",
       entityId: id,
-      summary: `${c.name} moved from ${before.packageId ? "previous package" : "no package"} to ${pkg.name}`,
-      meta: { from: before.packageId, to: pkg.id, reason },
+      summary:
+        `${c.name} moved from ${before.package?.name ?? "no package"} to ${pkg.name}` +
+        (settled
+          ? ` — prorated ${settled.adjustment.toFixed(2)} (${settled.direction})`
+          : prorate
+            ? " — no adjustment due"
+            : " — proration switched off"),
+      meta: {
+        from: before.packageId,
+        to: pkg.id,
+        reason,
+        proration: settled
+          ? {
+              adjustment: settled.adjustment,
+              direction: settled.direction,
+              cycleDays: settled.cycleDays,
+              remainingDays: settled.remainingDays,
+              invoiceId: settled.invoiceId ?? null,
+              walletTransactionId: settled.walletTransactionId ?? null,
+            }
+          : null,
+      },
     },
     userId
   );
   return c;
+}
+
+type SettledPackageChange = {
+  adjustment: number;
+  direction: "upgrade" | "downgrade" | "none";
+  cycleDays: number;
+  remainingDays: number;
+  invoiceId: string | null;
+  walletTransactionId: string | null;
+};
+
+/**
+ * Raises the invoice or the credit for a package change. Runs on the caller's
+ * transaction, so it is part of the same atomic unit as the swap.
+ */
+async function settlePackageChange(
+  tx: Tx,
+  input: {
+    customer: { id: string; name: string };
+    from: { id: string; name: string; monthlyPrice: number; validityDays: number } | null;
+    to: { id: string; name: string; monthlyPrice: number; validityDays: number };
+    now: Date;
+    createdById: string | null;
+  }
+): Promise<SettledPackageChange> {
+  // No old package means nothing was being billed, so there is nothing to
+  // prorate against: this is a new subscription, not a change of price.
+  if (!input.from) {
+    return {
+      adjustment: 0,
+      direction: "none",
+      cycleDays: input.to.validityDays,
+      remainingDays: 0,
+      invoiceId: null,
+      walletTransactionId: null,
+    };
+  }
+
+  // The customer's latest invoice window is the cycle they are actually in.
+  // Read on this transaction so the adjustment and the swap see the same state.
+  const latest = await tx.invoice.findFirst({
+    where: { customerId: input.customer.id },
+    orderBy: { billingTo: "desc" },
+    select: { billingFrom: true, billingTo: true },
+  });
+
+  const calc = prorate({
+    fromPrice: input.from.monthlyPrice,
+    toPrice: input.to.monthlyPrice,
+    validityDays: input.to.validityDays || input.from.validityDays || 30,
+    cycle:
+      latest?.billingFrom && latest.billingTo
+        ? { from: latest.billingFrom, to: latest.billingTo }
+        : null,
+    changedAt: input.now,
+    fromName: input.from.name,
+    toName: input.to.name,
+  });
+
+  const base = {
+    adjustment: calc.adjustment,
+    direction: calc.direction,
+    cycleDays: calc.cycle.days,
+    remainingDays: calc.remainingDays,
+    invoiceId: null,
+    walletTransactionId: null,
+  };
+
+  // Same price, or nothing left of the month, or an exact-zero after rounding.
+  // In every case there is no money to move and an invoice for 0.00 is worse than
+  // no invoice at all.
+  if (calc.adjustmentPoisha === 0) return base;
+
+  if (calc.direction === "upgrade") {
+    const invoice = await createInvoice(tx, {
+      customerId: input.customer.id,
+      packageId: input.to.id,
+      issueDate: input.now,
+      // Due now, not at the end of the month: the customer has had the higher
+      // speed already, so the money for it is already owed. A proration invoice
+      // dated today and due next month would be a debt the customer has not
+      // incurred.
+      dueDate: input.now,
+      amount: calc.adjustment,
+      note: calc.lines.join("\n"),
+      createdById: input.createdById ?? undefined,
+    });
+    return { ...base, adjustment: invoice.total, invoiceId: invoice.id };
+  }
+
+  // A downgrade is money owed to the customer, so it goes on the wallet through
+  // Phase G's single ledger writer — which takes its own row lock. `advancePayment`
+  // is never written directly: it is a derived balance, and the ledger is the
+  // record that has to agree with it.
+  const { adjust } = await import("@/lib/services/wallet");
+  const credited = await adjust(tx, {
+    customerId: input.customer.id,
+    amount: Math.abs(calc.adjustment),
+    reason: [
+      `Prorated package change: ${input.from.name} to ${input.to.name}.`,
+      ...calc.lines.slice(1),
+    ].join("\n"),
+    createdById: input.createdById,
+    reference: `proration:${input.customer.id}`,
+  });
+  return { ...base, walletTransactionId: credited.transaction.id };
 }
 
 export async function renewCustomer(

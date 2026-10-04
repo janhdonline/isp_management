@@ -90,6 +90,17 @@ export const DEFAULT_SETTINGS: {
 
   // Billing
   { key: "billing.cycle", value: "Monthly", group: "Billing" },
+
+  /// Phase R. Whether a mid-cycle package change settles the difference for the
+  /// part of the month already served.
+  ///
+  /// On by default, because a customer who upgrades on the 20th and is billed for
+  /// the whole month has been overcharged by ten days' difference, and one who
+  /// downgrades has been undercharged. Turning it off restores the old swap-only
+  /// behaviour, which is occasionally the policy an ISP actually wants: some bill
+  /// on the package held at the start of the month and treat a mid-month change as
+  /// effective next cycle. That is a choice, not an oversight, so both are here.
+  { key: "billing.prorateOnPackageChange", value: "true", group: "Billing" },
   { key: "billing.gracePeriod", value: "5", group: "Billing" },
   { key: "billing.lateFeeType", value: "percent", group: "Billing" },
   { key: "billing.lateFee", value: "0", group: "Billing" },

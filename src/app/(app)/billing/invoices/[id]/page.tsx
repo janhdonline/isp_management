@@ -51,6 +51,10 @@ export default async function InvoiceDetailPage({
   if (!invoice) notFound();
 
   const balance = round2(invoice.total - invoice.paid);
+  // A proration invoice is identified by its note, because that is where the
+  // arithmetic lives and an operator checking "why is there an invoice for 166.67"
+  // is looking at this page, not at a category column.
+  const isProration = /prorated over the rest of the billing cycle/i.test(invoice.note ?? "");
   const href = (t: string) => `/billing/invoices/${invoice.id}?tab=${t}`;
 
 
@@ -172,9 +176,23 @@ export default async function InvoiceDetailPage({
                     <tr className="border-b border-[var(--border)]">
                       <td className="py-2.5">
                         <p className="font-medium">
-                          {invoice.package ? `${invoice.package.name} — monthly subscription` : "Service charge"}
+                          {isProration
+                            ? `Prorated package change — ${invoice.package?.name ?? "new package"}`
+                            : invoice.package
+                              ? `${invoice.package.name} — monthly subscription`
+                              : "Service charge"}
                         </p>
-                        {invoice.note ? <p className="text-xs text-fg-muted">{invoice.note}</p> : null}
+                        {/*
+          A proration note is a block, not a sentence. Preformatted so the
+          arithmetic lines up in a column, and a customer — or the person
+          explaining it to them — can read "10 x 16.67 = 166.67" instead of one
+          long run-on line wrapping unpredictably.
+        */}
+                        {invoice.note ? (
+                          <p className="mt-1 whitespace-pre-line font-mono text-[11px] leading-relaxed text-fg-muted">
+                            {invoice.note}
+                          </p>
+                        ) : null}
                       </td>
                       <td className="py-2.5 text-right tabular-nums">{formatCurrency(invoice.amount)}</td>
                     </tr>

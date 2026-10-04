@@ -1127,6 +1127,38 @@ console.log("\nBandwidth enforcement (Phase Q)");
 
 }
 
+/* ---------------------------------------------------------------- */
+console.log("\nProrated package changes (Phase R)");
+{
+  const invoices = await api("/billing/invoices");
+  check("the invoices page renders", invoices.status === 200, `got ${invoices.status}`);
+  const html = typeof invoices.body === "string" ? invoices.body : "";
+  check("it lists invoices", /Invoice/i.test(html));
+
+  // The rendering of a proration note, if this instance has one. Conditional for
+  // the same reason the Phase P checks were: an instance with no mid-cycle package
+  // change has nothing to render, and asserting on a row that does not exist would
+  // be asserting about the fixture rather than the feature.
+  const listed = await api("/api/invoices?perPage=50");
+  const rows = listed.body?.rows ?? [];
+  const prorated = rows.find((r) => /prorated over the rest of the billing cycle/i.test(r.note ?? ""));
+  if (prorated) {
+    const page = await api(`/billing/invoices/${prorated.id}`);
+    check("a proration invoice renders", page.status === 200, `got ${page.status}`);
+    const detail = typeof page.body === "string" ? page.body : "";
+    check("it is labelled as a proration", /Prorated package change/i.test(detail));
+    check("it shows the arithmetic", /Daily rate difference/.test(detail) && /Adjustment:/.test(detail));
+  } else {
+    check(
+      "no proration invoice to render, so the note layout was not asserted",
+      true
+    );
+  }
+
+  const customers = await api("/customers");
+  check("the customers page renders", customers.status === 200, `got ${customers.status}`);
+}
+
 console.log(`\n${"─".repeat(46)}`);
 console.log(`  ${pass} passed, ${fail} failed`);
 console.log(`${"─".repeat(46)}\n`);
