@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { Badge, StatusBadge, StatusTriple } from "@/components/ui/badge";
 import { Tabs } from "@/components/ui/tabs";
+import { OnuControlActions } from "@/components/network/onu-control-actions";
 import { StatCard } from "@/components/ui/stat-card";
 import { DataTableShell, type Column } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/states";
@@ -94,7 +95,14 @@ type Customer = {
   package: Pkg;
   router: { id: string; name: string; ipAddress: string; model: string | null } | null;
   olt: { id: string; name: string; vendor: string | null } | null;
-  onu: { id: string; serialNo: string; status: string; rxPower: number | null } | null;
+  onu: {
+    id: string;
+    serialNo: string;
+    status: string;
+    rxPower: number | null;
+    vendor: string | null;
+    ponIndex: string | null;
+  } | null;
   invoices: {
     id: string; invoiceNumber: string; issueDate: Date; dueDate: Date;
     amount: number; discount: number; vat: number; total: number; paid: number; status: string;
@@ -223,9 +231,11 @@ export function CustomerProfileTabs({
   walletCount,
   metrics,
   fup,
+  canControl,
 }: {
   tab: string;
   customer: Customer;
+  canControl?: boolean;
   activity: ActivityRow[];
   activityHref: string;
   reminders: ReminderRow[];
@@ -247,6 +257,7 @@ export function CustomerProfileTabs({
     { value: "billing", label: "Billing", href: href("billing"), count: metrics.invoiceCount },
     { value: "payments", label: "Payments", href: href("payments"), count: customer.payments.length },
     { value: "connection", label: "Connection", href: href("connection") },
+    { value: "equipment", label: "Equipment", href: href("equipment") },
     { value: "complaints", label: "Complaints", href: href("complaints"), count: customer.tickets.length },
     { value: "usage", label: "Usage", href: href("usage"), count: customer.sessionLogs.length },
     { value: "reminders", label: "Reminders", href: href("reminders"), count: reminders.length },
@@ -267,6 +278,9 @@ export function CustomerProfileTabs({
       {tab === "billing" ? <BillingTab customer={customer} metrics={metrics} /> : null}
       {tab === "payments" ? <PaymentsTab customer={customer} /> : null}
       {tab === "connection" ? <ConnectionTab customer={customer} /> : null}
+      {tab === "equipment" ? (
+        <EquipmentTab customer={customer} canControl={canControl} />
+      ) : null}
       {tab === "complaints" ? <ComplaintsTab customer={customer} /> : null}
       {tab === "usage" ? <UsageTab customer={customer} fup={fup} /> : null}
       {tab === "reminders" ? <RemindersTab reminders={reminders} /> : null}
@@ -486,6 +500,77 @@ function PaymentsTab({ customer }: { customer: Customer }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Equipment                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The customer's own device, and the four things support can do to it remotely.
+ *
+ * The same component the ONU list uses, given the same serial. That is the point:
+ * "reboot this customer's ONU" and "reboot ONU HWTC… from the network list" are the
+ * same action against the same device, and two copies of it would eventually
+ * describe the confirmation differently — which is how an operator learns that the
+ * warning on one screen does not apply on the other.
+ *
+ * A deauthorize here needs no extra warning text of its own: the dialog quotes this
+ * customer by name, because the impact is computed from the link this tab is about.
+ */
+function EquipmentTab({ customer, canControl = false }: { customer: Customer; canControl?: boolean }) {
+  const onu = customer.onu;
+
+  if (!onu) {
+    return (
+      <Card>
+        <CardHeader title="Customer equipment" />
+        <CardBody>
+          <p className="text-sm text-fg-muted">
+            No ONU is linked to this customer. An ONU appears here by itself once it
+            checks in over TR-069, and is linked by entering its serial on the
+            customer form.
+          </p>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Card>
+        <CardHeader title="Device" />
+        <CardBody>
+          <InfoCard
+            title=""
+            rows={[
+              ["Serial", <span className="font-mono" key="s">{onu.serialNo}</span>],
+              ["State", onu.status],
+              ["Vendor", onu.vendor ?? "—"],
+              ["PON port", onu.ponIndex ? <span className="font-mono" key="p">{onu.ponIndex}</span> : "—"],
+              [
+                "RX power",
+                onu.rxPower == null ? "—" : `${onu.rxPower} dBm`,
+              ],
+            ]}
+          />
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Remote control"
+          description="Sent to the cabinet over its vendor adapter. Each one asks what will happen before it does it."
+        />
+        <CardBody>
+          <OnuControlActions serialNo={onu.serialNo} canControl={canControl} />
+          <p className="mt-3 text-xs text-fg-subtle">
+            A failed command is queued and retried, and the outcome of every attempt is
+            written to the activity log against your name.
+          </p>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
 /* Connection                                                          */
 /* ------------------------------------------------------------------ */
 

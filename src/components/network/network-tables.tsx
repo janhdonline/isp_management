@@ -12,6 +12,7 @@ import { useToast } from "@/components/providers";
 import { StatCard } from "@/components/ui/stat-card";
 import { formatBytes, formatDateTime, formatNumber, formatUptime, relativeTime } from "@/lib/utils";
 import { DEVICE_STATUSES } from "@/lib/enums";
+import { OnuControlActions } from "@/components/network/onu-control-actions";
 import {
   CircleCheck,
   MoreHorizontal,
@@ -231,16 +232,26 @@ export type OnuRow = {
   customer: { id: string; name: string; username: string } | null;
 };
 
+/**
+ * `canControl` comes from the server, not from a client-side role guess.
+ *
+ * A reader sees no buttons at all rather than disabled ones — a disabled button
+ * invites the question, and the answer is already on the page. The service layer
+ * checks `network.edit` again regardless, so this is presentation and not the
+ * enforcement.
+ */
 export function OnusTable({
   rows,
   olts,
   areas,
   pagination,
+  canControl = false,
 }: {
   rows: OnuRow[];
   olts: { id: string; name: string }[];
   areas: { id: string; name: string }[];
   pagination?: React.ReactNode;
+  canControl?: boolean;
 }) {
   const columns: Column<OnuRow>[] = [
     {
@@ -284,6 +295,15 @@ export function OnusTable({
     { key: "area", header: "Area", hideBelow: "xl", cell: (r) => <span className="text-xs text-fg-muted">{r.area?.name ?? "—"}</span>, exportValue: (r) => r.area?.name ?? "" },
     { key: "seen", header: "Last Seen", align: "right", hideBelow: "md", cell: (r) => <span className="whitespace-nowrap text-xs text-fg-muted">{relativeTime(r.lastSeenAt)}</span>, exportValue: (r) => (r.lastSeenAt ? formatDateTime(r.lastSeenAt) : "") },
     { key: "status", header: "Status", align: "right", cell: (r) => <StatusBadge status={r.status} />, exportValue: (r) => r.status },
+    {
+      key: "control",
+      header: "Control",
+      hideBelow: "xl",
+      cell: (r) => <OnuControlActions serialNo={r.serialNo} canControl={canControl} />,
+      // Deliberately empty: the Excel export is a report about the network, and a
+      // column of buttons that do nothing in a spreadsheet is worse than no column.
+      exportValue: () => "",
+    },
   ];
 
   return (

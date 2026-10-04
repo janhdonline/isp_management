@@ -48,7 +48,22 @@ export type NetworkActionType =
    * null and `username` holds the device serial — the only handle a CPE knows
    * itself by.
    */
-  | "onuConfigure";
+  | "onuConfigure"
+  /**
+   * Phase P. Remote commands against a single ONU rather than a router: reboot,
+   * authorize, deauthorize and factory reset. They share this queue because they
+   * share the property that matters — the database must never claim something
+   * reached the device when it did not — and because a reboot that failed is exactly
+   * as retryable as a secret that failed to save.
+   *
+   * `username` holds the device serial, `routerId` is null, and `payload` is null:
+   * the action is the `action` column and the device is its own row, so a retry has
+   * everything it needs and nothing on this row could be a credential.
+   */
+  | "onuReboot"
+  | "onuAuthorize"
+  | "onuDeauthorize"
+  | "onuReset";
 
 /** How each action reads on an audit log and in the enforcement queue. */
 const ACTION_LABELS: Record<NetworkActionType, string> = {
@@ -58,6 +73,10 @@ const ACTION_LABELS: Record<NetworkActionType, string> = {
   setProfile: "Set profile",
   removeSecret: "Remove secret",
   onuConfigure: "Configure ONU",
+  onuReboot: "Reboot ONU",
+  onuAuthorize: "Authorize ONU",
+  onuDeauthorize: "Deauthorize ONU",
+  onuReset: "Factory-reset ONU",
 };
 
 /**
@@ -644,10 +663,14 @@ function describeOutcome(action: NetworkActionType, enabled: boolean): string {
     case "removeSecret":
       return "Removed the secret for";
     case "onuConfigure":
-      // Only reachable from the retry path's early branch, which never calls
+    case "onuReboot":
+    case "onuAuthorize":
+    case "onuDeauthorize":
+    case "onuReset":
+      // Only reachable from the retry paths' early branches, which never call
       // `resolve`. Present so the switch stays exhaustive and a future edit that
       // does route here has an answer.
-      return "Configured";
+      return "Sent to the ONU";
   }
   void enabled;
 }
@@ -720,6 +743,15 @@ export async function retryPendingNetworkActions(max = 50): Promise<{
   failed: number;
   givenUp: number;
 }> {
+  // Phase P. A row left `Running` is a process that died mid-call to a device.
+  //
+  // Without this the status is a permanent hole: the select below takes `Pending`
+  // only, so a crashed run's reboot would sit for ever and the operator's request
+  // would never happen again — with the queue showing nothing pending to explain
+  // why. Anything older than a few minutes is older than any plausible device call.
+  const { reclaimStaleOnuActions } = await import("@/lib/services/onu-control");
+  await reclaimStaleOnuActions();
+
   const pending = await prisma.networkAction.findMany({
     where: { status: "Pending", attempts: { lt: MAX_ATTEMPTS } },
     orderBy: { createdAt: "asc" },
@@ -742,6 +774,17 @@ export async function retryPendingNetworkActions(max = 50): Promise<{
     if (row.action === "onuConfigure") {
       const { retryOnuConfigure } = await import("@/lib/services/tr069");
       const done = await retryOnuConfigure({ id: row.id });
+      if (done) stats.done += 1;
+      else stats.failed += 1;
+      continue;
+    }
+
+    // Phase P. Claimed inside the executor, not here: a double reboot is a customer
+    // watching two outages, so the conditional claim matters for these more than for
+    // the router actions above, which are idempotent by nature.
+    const { isOnuOutboxAction, retryOnuAction } = await import("@/lib/services/onu-control");
+    if (isOnuOutboxAction(row.action)) {
+      const done = await retryOnuAction({ id: row.id });
       if (done) stats.done += 1;
       else stats.failed += 1;
       continue;

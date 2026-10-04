@@ -2016,6 +2016,137 @@ the warning changes the moment the number does.
 
 ------------------------------------------------------------------------
 
+## 39. Remote ONU Control
+
+Rebooting an ONU meant a truck roll, or a login to somebody's NMS. Support could
+not fix "the ONU is hung" from their chair, so the customer waited and the ISP paid
+for the visit. The Phase N adapter already knew how to talk to a cabinet; this
+section is the part in between — what the operator is about to do, whether it is
+safe, whether the hardware can do it, and what happened afterwards.
+
+## The four actions are not equally dangerous
+
+The plan lists four verbs. They are not four buttons:
+
+| Action | Costs | Keeps config | Needs the second act |
+|---|---|---|---|
+| Reboot | a customer ~1 minute | yes | no |
+| Authorize | nothing | yes | no |
+| Deauthorize | **a customer's service, now** | yes | yes |
+| Factory reset | **a site visit afterwards** | **no** | yes |
+
+A reboot is routine support work, so making an operator type anything for it means
+they do not — and the one that mattered gets skipped. The other two get a second,
+deliberate act.
+
+**The confirm step is the product.** Nothing is sent on the first click. The second
+opens a dialog whose *title* names the device and whose *body* is a sentence:
+
+> **Factory reset HWTC00000001?**
+> Erase the device's configuration entirely. It comes back with nothing on it and
+> will need provisioning again before it serves anyone.
+> On OLT-01, PON 0/1/1. Rahim Uddin is on this ONU and active.
+
+"Reset this ONU?" tells an operator nothing. A misclick on factory reset has to be
+obviously a misclick *before* it happens, because the recovery is a site visit — so
+the serial is in the title, not just in the body, and the consequence is prose
+rather than "Are you sure?".
+
+## The refusal is in the service, not the dialog
+
+`deauthorize` and `reset` are refused by `requestOnuAction` unless the request
+carries the confirmation. A dialog-only check is one `curl` away from not existing,
+and this is the check that takes a paying customer off the air. The dialog's tick
+has to name the customer who will be affected — *"Rahim Uddin may lose service
+immediately. Do it anyway."* — because "yes" on its own is not a decision anybody
+made.
+
+A **suspended** customer is deliberately described as *not on the air*. Their line is
+already down, so the warning would be a lie, and an operator who learns to ignore it
+stops reading it for the ones that matter.
+
+## A bug that would have made the whole feature refuse to do anything
+
+`oltAdapterFor` reads the management address, the vendor and the SNMP port from the
+row it is given. The first version of this module passed only `{ id, name }`. The
+result was an unconfigured adapter on **every cabinet in the country**, which reports
+every action unsupported — so the feature would have shipped as a button that always
+says "this OLT has no API vendor configured", and the code would have looked
+correct. The tests caught it on the first run. The row's configuration now travels
+with the target.
+
+The same class of bug, once more, was a **factory reset writing the reboot's leaf**.
+Phase N's driver wrote both to `reset`. Sending a reboot's command for a factory
+reset means the device comes back *configured*, quietly, having lost nothing — the
+one outcome where the operator is certain something went wrong and there is no
+evidence of it. They are separate leaves now, and a test asserts they differ.
+
+## Two claims, because there are two things to stop
+
+- **Two rows.** Inside a transaction that takes `FOR UPDATE` on the ONU row, so
+  concurrent requests serialise and the second sees the row the first created. The
+  lock is on the device because the requests are about the same device.
+- **Two executions of one row.** `executeOnuAction` claims the row by moving it
+  `Pending → Running` with a conditional update, so the loser's count is zero and it
+  never touches the device. **Phase A's drain does not do this**, and that is right
+  for a router action — those are idempotent. A reboot is not: two of them is a
+  customer watching two outages.
+
+`Running` is a status this module introduces, and it is a permanent hole without a
+reaper: the drain selects `Pending`, so a process that died mid-call would leave the
+operator's request queued for ever with nothing showing as pending to explain why.
+Anything older than five minutes is older than any plausible device call, so it goes
+back in the queue.
+
+### And one thing the lock cannot cover
+
+The commonest accident is not concurrency at all: an operator double-clicking
+Reboot, where the second request arrives *after* the first has finished and its row
+is `Done`. A ten-second window absorbs that.
+
+Beyond ten seconds a repeat is a **new intent**, not a duplicate. A reboot that worked
+thirty seconds ago and another one now is somebody who changed their mind, and
+absorbing it would silently do nothing to a hung device.
+
+That window is a cache, and this codebase argues against caches elsewhere — so it is
+worth being precise about the difference. Nothing here decides *whether a device can
+be reached* or *how full a port is*. It only answers "was this exact command, on this
+exact device, sent a moment ago", and being ten seconds stale about that costs one
+reboot.
+
+## The outbox stores a device reference and nothing else
+
+`payload` is **null**. Not the command, not a parameter, not a hash. The action is
+the `action` column and the device is its own row, so a retry has everything it needs
+and nothing on that row could be a credential. The adapter reads its community from
+Settings at the moment of the call, and nothing it reads is ever written down.
+
+The row is written **before** the device is called, outside any transaction — Phase A's
+ordering for Phase A's reason. A crash between the two must not lose the request, and
+the failure mode of losing it is a device that stays hung until the end of the shift.
+
+## Unsupported is a sentence, not a silent no-op
+
+`capabilities()` is a method on the adapter, asked *before* a button is pressed.
+An unconfigured cabinet, or a driver that cannot reset, says so in the dialog with
+the field to fix named. And nothing is queued in that case: a row that fails ten
+times for a reason that will never change is noise in the queue, and it makes the
+queue look busy when nothing can be done about it.
+
+## Permission
+
+`network.edit`, checked in the server action before anything is read, written or sent
+— the same gate every mutation here uses. The buttons are resolved on the server, so
+a reader is shown *status only* rather than buttons that would fail.
+
+**Stated plainly: the denial path is not covered by an automated test.** The action
+imports `server-only` through `lib/auth` and cannot be loaded outside Next's own
+runtime, so `scripts/verify.mjs` covers the wiring and the tests cover everything
+below the gate. That is a real gap in the coverage, not a claim that the gate is
+unimportant.
+
+------------------------------------------------------------------------
+
 ## Final Requirement
 
 The final UI must feel like **one unified ISP operating system**, not

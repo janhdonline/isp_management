@@ -6,6 +6,7 @@ import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import { StatCard, StatCardGrid } from "@/components/ui/stat-card";
 import { Pagination } from "@/components/ui/data-table";
 import { OnusTable } from "@/components/network/network-tables";
+import { can } from "@/lib/auth";
 import { formatNumber } from "@/lib/utils";
 import { Signal, Wifi, WifiOff, Zap } from "lucide-react";
 
@@ -18,11 +19,14 @@ export default async function OnuPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const p = parseListParams(await searchParams);
-  const [result, metrics, olts, areas] = await Promise.all([
+  const [result, metrics, olts, areas, canControl] = await Promise.all([
     listOnus(p),
     onuMetrics(),
     prisma.olt.findMany({ orderBy: { name: "asc" } }),
     prisma.area.findMany({ where: { status: "Active" }, orderBy: { name: "asc" } }),
+    // Resolved on the server so a reader is never shown a button that would only
+    // fail. The service layer checks again; this is presentation, not enforcement.
+    can("network.edit"),
   ]);
 
   return (
@@ -41,6 +45,7 @@ export default async function OnuPage({
         </StatCardGrid>
 
         <OnusTable
+          canControl={canControl}
             rows={result.rows.map((o) => ({
               id: o.id,
               serialNo: o.serialNo,

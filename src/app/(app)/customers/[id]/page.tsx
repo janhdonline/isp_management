@@ -15,6 +15,7 @@ import { CustomerQuickActions } from "@/components/customers/customer-actions";
 import { PortalAccessButton } from "@/components/customers/portal-access-button";
 import { CustomerProfileHeader, CustomerProfileTabs } from "@/components/customers/customer-profile";
 import { StatusTriple } from "@/components/ui/badge";
+import { can } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +36,10 @@ export default async function CustomerProfilePage({
   const sp = await searchParams;
   const tab = typeof sp.tab === "string" ? sp.tab : "overview";
 
-  const [customer, packages, activity, reminders, wallet, accounts, today, usage] = await Promise.all([
+  const [canControl, customer, packages, activity, reminders, wallet, accounts, today, usage] =
+    await Promise.all([
+    // Server-resolved so a reader is never shown a button that would only fail.
+    can("network.edit"),
     getCustomerFull(id),
     getAllPackages(),
     getCustomerActivity(id, 40),
@@ -160,6 +164,7 @@ export default async function CustomerProfilePage({
         <CustomerProfileTabs
           tab={tab}
           customer={profile}
+          canControl={canControl}
           activity={activity.map((a) => ({
             id: a.id,
             action: a.action,

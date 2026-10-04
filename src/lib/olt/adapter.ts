@@ -57,7 +57,26 @@ export interface OltAdapter {
   authorizeOnu(serial: string): Promise<boolean>;
   deauthorizeOnu(serial: string): Promise<boolean>;
   rebootOnu(serial: string): Promise<boolean>;
+  factoryReset(serial: string): Promise<boolean>;
+
+  /**
+   * Which of the remote-control actions this adapter can actually carry out.
+   *
+   * Asked before a button is pressed rather than discovered from the exception
+   * afterwards, because "this vendor's driver cannot reset a device" is a fact
+   * worth showing an operator and not a failure they have to provoke. A driver that
+   * does not override it claims all four, which is right for SNMP and wrong for
+   * anything read-only — which is exactly why it is a method and not a constant.
+   */
+  capabilities(): OnuCapability[];
 }
+
+/**
+ * `reset` is the factory reset, not a soft one. Named explicitly in the type
+ * because "reset" and "reboot" are the pair people confuse, and the difference
+ * between them is whether the device keeps its configuration.
+ */
+export type OnuCapability = "reboot" | "authorize" | "deauthorize" | "reset";
 
 /** What the sync needs to know about a cabinet to build an adapter for it. */
 export type OltRow = {
@@ -103,6 +122,20 @@ export class UnconfiguredOltAdapter implements OltAdapter {
   }
   async rebootOnu(): Promise<boolean> {
     this.fail();
+  }
+  async factoryReset(): Promise<boolean> {
+    this.fail();
+  }
+
+  /**
+   * Nothing, because there is nothing behind it.
+   *
+   * Returning `[]` rather than throwing is the point: the caller asks this to decide
+   * whether to offer an action, and an exception at that moment would turn "this
+   * cabinet is not set up" into "the page is broken".
+   */
+  capabilities(): OnuCapability[] {
+    return [];
   }
 }
 

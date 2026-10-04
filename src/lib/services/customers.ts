@@ -354,6 +354,8 @@ export async function getCustomerFull(id: string) {
       package: true,
       router: true,
       olt: true,
+      // The whole relation, so the Equipment tab (Phase P) can show the vendor and
+      // the port without a second query per profile. Six scalar columns.
       onu: true,
       invoices: {
         include: { payments: true },

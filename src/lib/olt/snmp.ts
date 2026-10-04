@@ -3,6 +3,7 @@ import {
   UnconfiguredOltAdapter,
   type OltAdapter,
   type OltAdapterConfig,
+  type OnuCapability,
   type OnuReading,
   type PonPort,
   type VendorOids,
@@ -315,8 +316,35 @@ export class SnmpOltAdapter implements OltAdapter {
     return this.write(serial, "authorize", 2);
   }
 
+  /** For a config dump with the credential provably absent. */
+
   async rebootOnu(serial: string): Promise<boolean> {
-    return this.write(serial, "reset", 1);
+    return this.write(serial, "reboot", 1);
+  }
+
+  /**
+   * Factory reset.
+   *
+   * A different leaf from a reboot, and the distinction is the whole point of the
+   * pair: `reboot` power-cycles and the device comes back configured, `reset` erases
+   * the configuration and the device comes back needing Phase M to provision it
+   * again. Sending a reboot's leaf for a reset would look like it worked.
+   */
+  async factoryReset(serial: string): Promise<boolean> {
+    return this.write(serial, "factory-reset", 1);
+  }
+
+  /**
+   * All four, because the vendor trees expose all four.
+   *
+   * Worth being honest about what that means on real hardware: whether a given
+   * firmware *permits* a factory reset over SNMP is the vendor's decision, and a
+   * driver that claimed to refuse would be guessing. So the capability list says
+   * "this adapter can attempt it", and a device that refuses answers `false`, which
+   * is reported as a refusal rather than as a silent no-op.
+   */
+  capabilities(): OnuCapability[] {
+    return ["reboot", "authorize", "deauthorize", "reset"];
   }
 
   /** For a config dump with the credential provably absent. */

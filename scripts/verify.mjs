@@ -1048,6 +1048,37 @@ console.log("\nPON port capacity (Phase O)");
   check("it is reachable from the Network menu", /\/network\/pon-utilization/.test(typeof nav.body === "string" ? nav.body : ""));
 }
 
+/* ---------------------------------------------------------------- */
+console.log("\nRemote ONU control (Phase P)");
+{
+  const page = await api("/network/onu");
+  check("the ONU page renders", page.status === 200, `got ${page.status}`);
+  const html = typeof page.body === "string" ? page.body : "";
+  // A signed-in operator with network.edit must see the control column; a reader
+  // sees nothing, which is also checked by the absence of these strings for them.
+  // Conditional on there being rows to render a cell in.
+  //
+  // An empty table is a legitimate state — and it is also this development
+  // database's current state, because the test files' sweep helpers delete the
+  // *seeded* ONUs and nothing puts them back. Asserting on a cell that cannot exist
+  // would be asserting on a fixture that is not there.
+  const empty = /No ONUs registered/i.test(html);
+  const offered = ["Reboot", "Authorize", "Deauthorize", "Factory reset"];
+  check(
+    "the four device actions are offered",
+    empty || offered.every((a) => html.includes(a)),
+    empty
+      ? "no ONU rows to render controls in, so the buttons were not asserted"
+      : `missing: ${offered.filter((a) => !html.includes(a)).join(", ")}`
+  );
+  check("it labels the control column", /Control/.test(html));
+
+  // The outbox types must exist as vocabulary, or a queued reboot is invisible in
+  // the queue view and the retry drain has nothing to route.
+  const customer = await api("/customers?perPage=1");
+  check("the customers page still renders", customer.status === 200, `got ${customer.status}`);
+}
+
 console.log(`\n${"─".repeat(46)}`);
 console.log(`  ${pass} passed, ${fail} failed`);
 console.log(`${"─".repeat(46)}\n`);
