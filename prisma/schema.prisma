@@ -569,6 +569,26 @@ model Router {
   /// and by a Disconnect-Request dropping the live session. That is a stronger
   /// guarantee than a disabled secret, which only takes effect at next login.
   useRadius   Boolean   @default(false)
+  /// Whether this system programs a **bandwidth** queue per subscriber on this
+  /// router, from each package's `downloadSpeed` / `uploadSpeed`.
+  ///
+  /// Separate from `autoProvision` and `useRadius` because it answers a different
+  /// question, and a router can answer all three differently:
+  ///
+  ///  - `autoProvision` — may this system write PPP secrets here?
+  ///  - `useRadius` — does authentication live on the router or in RADIUS?
+  ///  - `autoQueues` — may this system shape the *bandwidth* here?
+  ///
+  /// Off by default, like the other two. A queue with the wrong limits throttles a
+  /// paying customer to a speed they did not buy, and there is no way for the
+  /// customer to tell that from the network being slow — so it has to be a
+  /// decision somebody makes about one router at a time.
+  ///
+  /// When `useRadius` is also on, RADIUS wins and this is ignored: the
+  /// Mikrotik-Rate-Limit attribute is already carrying the same number, and two
+  /// limiters on one subscriber means whichever is stricter wins, which is not
+  /// something an operator chose.
+  autoQueues  Boolean   @default(false)
   status      String    @default("Unknown") // Online | Offline | Unknown
   cpu         Float?
   ram         Float?

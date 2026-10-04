@@ -1079,6 +1079,54 @@ console.log("\nRemote ONU control (Phase P)");
   check("the customers page still renders", customer.status === 200, `got ${customer.status}`);
 }
 
+/* ---------------------------------------------------------------- */
+console.log("\nBandwidth enforcement (Phase Q)");
+{
+  const routers = await api("/network/routers");
+  check("the routers page renders", routers.status === 200, `got ${routers.status}`);
+
+  // No id in the page HTML to borrow: the row's "View" action is a client-side
+  // `router.push`, and `routers` is not one of the generic API resources. So the
+  // candidates are the row ids present in the markup, and the check is that *some*
+  // router's detail page carries the opt-in — which is the thing being introduced.
+  const listHtml = typeof routers.body === "string" ? routers.body : "";
+  const candidates = [...new Set(listHtml.match(/\bc[a-z0-9]{20,24}\b/g) ?? [])].slice(0, 6);
+
+  let detailHtml = null;
+  for (const id of candidates) {
+    const page = await api(`/network/routers/${id}`);
+    if (page.status !== 200) continue;
+    const html = typeof page.body === "string" ? page.body : "";
+    if (!/Enforce package speeds/.test(html)) continue;
+    detailHtml = html;
+    break;
+  }
+
+  check(
+    "a router detail page offers the bandwidth opt-in",
+    detailHtml !== null,
+    candidates.length ? `none of ${candidates.length} row ids rendered it` : "no router rows to try"
+  );
+  if (detailHtml !== null) {
+    // The queue list is the audit, and it is shown whether or not the opt-in is on:
+    // the flag governs writing, not reading. An operator deciding whether to turn it
+    // on needs to see what is already programmed on that router.
+    check(
+      "it lists the queues it manages",
+      /Queues on this router/.test(detailHtml) || /No <code/.test(detailHtml),
+      "expected the queue list or its empty explanation"
+    );
+  }
+
+  // The RADIUS branch is deliberately *not* checked here. The routers list mentions
+  // RADIUS for every router — the toggle card is on the page — so there is no way to
+  // establish from outside that any particular router has it switched on, and
+  // asserting the copy appears would be asserting about a router that may not
+  // exist. It is covered where it can be asserted properly, in
+  // `tests/queue.test.mjs`, both as a pure rule and end to end.
+
+}
+
 console.log(`\n${"─".repeat(46)}`);
 console.log(`  ${pass} passed, ${fail} failed`);
 console.log(`${"─".repeat(46)}\n`);

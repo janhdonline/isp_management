@@ -108,6 +108,65 @@ export async function setRouterRadiusAction(
     return { formError: e instanceof Error ? e.message : "Could not change the setting" };
   }
 }
+/**
+ * The per-router opt-in for bandwidth queues (Phase Q).
+ *
+ * A separate flag from `autoProvision` on purpose, because they answer different
+ * questions and a router can answer both: this one is about *how much pipe* a
+ * subscriber gets, which is not something a router administrator should find out
+ * by noticing their customers are slow.
+ *
+ * Turning it on does not retroactively touch anybody. Existing subscribers are
+ * shaped the next time something about them changes — a package edit, a
+ * reconnect, a new install — which is deliberate: switching it on should not
+ * rewrite a thousand queues at once without anybody watching.
+ */
+export async function setRouterAutoQueuesAction(
+  id: string,
+  enabled: boolean
+): Promise<NetActionState> {
+  try {
+    const session = await requirePermission("network.edit");
+    const { prisma } = await import("@/lib/prisma");
+    const router = await prisma.router.findUnique({
+      where: { id },
+      select: { id: true, name: true, autoQueues: true, useRadius: true },
+    });
+    if (!router) return { formError: "That router no longer exists." };
+
+    // Turning it on where RADIUS already enforces the same number would leave two
+    // limiters on every subscriber and the stricter one silently winning.
+    if (enabled && router.useRadius) {
+      return {
+        formError:
+          `${router.name} authenticates through RADIUS, which already sends ` +
+          "Mikrotik-Rate-Limit for each package. Bandwidth queues are not needed there, and " +
+          "turning them on would put two limiters on the same subscriber. Turn off RADIUS first.",
+      };
+    }
+
+    await prisma.router.update({ where: { id }, data: { autoQueues: enabled } });
+    await logActivity(
+      {
+        action: enabled ? "Enable" : "Disable",
+        entity: "Router",
+        entityId: id,
+        summary: enabled
+          ? `Bandwidth queues turned on for ${router.name} — this app may now shape subscriber speed on it, from each package's downloadSpeed and uploadSpeed`
+          : `Bandwidth queues turned off for ${router.name} — existing queues are left in place and no new ones will be written`,
+      },
+      session.id
+    );
+
+    const { revalidatePath } = await import("next/cache");
+    revalidatePath(`/network/routers/${id}`);
+    revalidatePath("/network/routers");
+    return { success: enabled ? "Bandwidth queues on." : "Bandwidth queues off." };
+  } catch (e) {
+    return { formError: e instanceof Error ? e.message : "Could not change the flag." };
+  }
+}
+
 export async function setRouterAutoProvisionAction(
   id: string,
   enabled: boolean

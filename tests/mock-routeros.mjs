@@ -76,6 +76,21 @@ let secrets = [
   { ".id": "*S3", name: "offline300", password: "offline300", profile: "10Mbps", disabled: "no", service: "isp-pppoe" },
 ];
 
+/**
+ * Simple queues — the bandwidth mechanism (Phase Q).
+ *
+ * Extended rather than forked, deliberately: this is the same REST surface, the
+ * same auth, the same `.id` convention and the same client-side find-by-name, and
+ * a second mock would have been a second set of answers to questions the first one
+ * already answered. What is added is one more collection, and the awkward part of
+ * it is `max-limit`, which RouterOS writes as a pair: `10M/5M`, sometimes
+ * `10m/5m`, and on some versions `10000000/5000000` for the same thing.
+ */
+let simpleQueues = [
+  { ".id": "*Q1", name: "isp-rahim100", target: "pppoe-service,100.64.10.5", "max-limit": "10M/2M" },
+  { ".id": "*Q2", name: "someone-elses", target: "pppoe-service,100.64.10.9", "max-limit": "50m/10m" },
+];
+
 /** Everything the mock was asked to do, so a test can assert on it. */
 export const calls = [];
 
@@ -164,6 +179,41 @@ export function startMockRouter({
         }
       }
 
+      // /queue/simple — bandwidth. Same collection semantics as /ppp/secret, so
+      // the client has to find by name itself.
+      if (path === "/queue/simple") {
+        if (req.method === "GET") return json(res, 200, simpleQueues);
+        if (req.method === "PUT") {
+          const parsed = JSON.parse(body || "{}");
+          if (simpleQueues.some((r) => r.name === parsed.name)) {
+            // RouterOS refuses a duplicate name rather than making a second row,
+            // and a client that ignored that would end up with two queues.
+            return json(res, 400, { error: 400, message: "failure: already have such name" });
+          }
+          const id = `*Q${simpleQueues.length + 1}`;
+          const row = { ".id": id, ...parsed };
+          simpleQueues.push(row);
+          return json(res, 200, row);
+        }
+      }
+
+      if (path.startsWith("/queue/simple/")) {
+        const id = decodeURIComponent(path.split("/").pop());
+        const idx = simpleQueues.findIndex((r) => r[".id"] === id);
+        if (idx === -1) {
+          return json(res, 404, { error: 404, message: "no such item" });
+        }
+        if (req.method === "PATCH") {
+          const parsed = JSON.parse(body || "{}");
+          simpleQueues[idx] = { ...simpleQueues[idx], ...parsed };
+          return json(res, 200, simpleQueues[idx]);
+        }
+        if (req.method === "DELETE") {
+          simpleQueues = simpleQueues.filter((r) => r[".id"] !== id);
+          return json(res, 200, {});
+        }
+      }
+
       if (path === "/ip/firewall/address-list") {
         if (req.method === "GET") return json(res, 200, addressList);
         if (req.method === "PUT") {
@@ -196,6 +246,15 @@ export function startMockRouter({
         password,
         addressList: () => addressList,
         secrets: () => secrets.slice(),
+        /** Every bandwidth queue, and one lookup by the name the app would use. */
+        queues: () => simpleQueues.slice(),
+        queue: (name) => simpleQueues.find((r) => r.name === name) ?? null,
+        /** How many writes reached the queue collection — the idempotency probe. */
+        queueWrites: () =>
+          calls.filter((c) => c.path.startsWith("/queue/simple") && c.method !== "GET").length,
+        setQueues: (rows) => {
+          simpleQueues = rows.map((r, i) => ({ ".id": `*Q${i + 1}`, ...r }));
+        },
         hotspot: () => HOTSPOT_ACTIVE.slice(),
         setHotspot: (rows) => {
           HOTSPOT_ACTIVE = rows;
@@ -205,6 +264,10 @@ export function startMockRouter({
         calls: () => calls.slice(),
         reset: () => {
           calls.length = 0;
+          simpleQueues = [
+            { ".id": "*Q1", name: "isp-rahim100", target: "pppoe-service,100.64.10.5", "max-limit": "10M/2M" },
+            { ".id": "*Q2", name: "someone-elses", target: "pppoe-service,100.64.10.9", "max-limit": "50m/10m" },
+          ];
           addressList = [{ ".id": "*1", list: "isp-blocked", address: "100.64.10.99" }];
           HOTSPOT_ACTIVE = [
             {

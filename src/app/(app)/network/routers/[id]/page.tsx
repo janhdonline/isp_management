@@ -4,6 +4,8 @@ import { routerHealth } from "@/lib/services/network";
 import { TriangleAlert } from "lucide-react";
 import { PageHeader, PageContainer } from "@/components/layout/page-header";
 import { RouterDetailView } from "@/components/network/network-tables";
+import { AutoQueuesPanel } from "@/components/network/auto-queues-panel";
+import { listManagedQueues } from "@/lib/services/bandwidth";
 import { AutoProvisionToggle } from "@/components/network/auto-provision-toggle";
 import { RadiusToggle } from "@/components/network/radius-toggle";
 
@@ -19,6 +21,16 @@ export default async function RouterDetailPage({ params }: { params: Promise<{ i
   const { id } = await params;
   const data = await routerHealth(id).catch(() => null);
   if (!data) notFound();
+
+  // Read after the health check, and separately: a router we cannot reach has no
+  // queue list to show, and the queue read must not be what decides whether this
+  // page exists at all.
+  const queues = await listManagedQueues(id).catch(() => ({
+    queues: [],
+    managed: 0,
+    unmanaged: 0,
+    simulated: true,
+  }));
 
   return (
     <>
@@ -63,6 +75,16 @@ export default async function RouterDetailPage({ params }: { params: Promise<{ i
           routerId={data.router.id}
           routerName={data.router.name}
           enabled={data.router.useRadius}
+        />
+        <AutoQueuesPanel
+          routerId={data.router.id}
+          routerName={data.router.name}
+          enabled={Boolean((data.router as { autoQueues?: boolean }).autoQueues)}
+          useRadius={Boolean(data.router.useRadius)}
+          queues={queues.queues}
+          managed={queues.managed}
+          unmanaged={queues.unmanaged}
+          simulated={queues.simulated}
         />
         <RouterDetailView
           router={{

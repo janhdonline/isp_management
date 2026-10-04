@@ -63,7 +63,23 @@ export type NetworkActionType =
   | "onuReboot"
   | "onuAuthorize"
   | "onuDeauthorize"
-  | "onuReset";
+  | "onuReset"
+  /**
+   * Phase Q. Bandwidth, not access.
+   *
+   * Its own types rather than one `setBandwidth`, because remove and program are
+   * different operations with different failure modes: a queue that should have
+   * been removed leaves a customer shaped to a package they no longer hold, while
+   * one that should have been updated leaves them throttled to a speed they
+   * upgraded from. Keeping them apart means a queue can never be given the wrong
+   * operation by a retry.
+   *
+   * `payload` is null on both. The limits are re-read from the package at attempt
+   * time, so a customer who changed package while their router was unreachable
+   * gets the one they are on now — and nothing on the row could be a credential.
+   */
+  | "setBandwidth"
+  | "removeBandwidth";
 
 /** How each action reads on an audit log and in the enforcement queue. */
 const ACTION_LABELS: Record<NetworkActionType, string> = {
@@ -77,6 +93,8 @@ const ACTION_LABELS: Record<NetworkActionType, string> = {
   onuAuthorize: "Authorize ONU",
   onuDeauthorize: "Deauthorize ONU",
   onuReset: "Factory-reset ONU",
+  setBandwidth: "Set bandwidth queue",
+  removeBandwidth: "Remove bandwidth queue",
 };
 
 /**
@@ -110,6 +128,7 @@ const PROVISIONING_ACTIONS: ReadonlySet<NetworkActionType> = new Set<NetworkActi
   "setProfile",
   "removeSecret",
 ]);
+
 
 export type EnforcementResult = {
   ok: boolean;
@@ -666,6 +685,9 @@ function describeOutcome(action: NetworkActionType, enabled: boolean): string {
     case "onuReboot":
     case "onuAuthorize":
     case "onuDeauthorize":
+    case "setBandwidth":
+    case "removeBandwidth":
+      return "Programmed the bandwidth queue for";
     case "onuReset":
       // Only reachable from the retry paths' early branches, which never call
       // `resolve`. Present so the switch stays exhaustive and a future edit that
@@ -785,6 +807,17 @@ export async function retryPendingNetworkActions(max = 50): Promise<{
     const { isOnuOutboxAction, retryOnuAction } = await import("@/lib/services/onu-control");
     if (isOnuOutboxAction(row.action)) {
       const done = await retryOnuAction({ id: row.id });
+      if (done) stats.done += 1;
+      else stats.failed += 1;
+      continue;
+    }
+
+    // Phase Q. A bandwidth queue is derived state — it can be rebuilt from the
+    // package at any time — so a retry here is safe to skip a moment without
+    // anything being lost, and skipping is idempotent in the strongest sense.
+    if (row.action === "setBandwidth" || row.action === "removeBandwidth") {
+      const { retryBandwidth } = await import("@/lib/services/bandwidth");
+      const done = await retryBandwidth({ id: row.id });
       if (done) stats.done += 1;
       else stats.failed += 1;
       continue;

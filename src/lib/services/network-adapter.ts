@@ -7,7 +7,7 @@
  * vendor only means implementing one function.
  */
 
-import { RouterOsClient, RouterOsError, type SessionSource } from "./routeros";
+import { RouterOsClient, RouterOsError, SimpleQueue, type SessionSource } from "./routeros";
 
 export type DeviceHealth = {
   status: "Online" | "Offline" | "Unknown";
@@ -80,6 +80,27 @@ export interface NetworkAdapter {
    */
   removeSecret(username: string): Promise<boolean>;
 
+  /**
+   * Creates or updates the subscriber's bandwidth queue (Phase Q).
+   *
+   * `changed: false` means the router already held exactly these limits and
+   * **nothing was written**. That distinction is the whole point of putting this on
+   * the adapter rather than in the service: a re-run has to be able to say "no"
+   * without touching the router, and only the adapter can know.
+   */
+  ensureBandwidthQueue(input: {
+    name: string;
+    target: string;
+    maxDownload: number;
+    maxUpload: number;
+  }): Promise<{ changed: boolean; created: boolean }>;
+
+  /** Takes the queue away. Removing one that is not there succeeds. */
+  removeBandwidthQueue(name: string): Promise<boolean>;
+
+  /** Every bandwidth queue on the router, for the router's own page. */
+  listBandwidthQueues(): Promise<SimpleQueue[]>;
+
   block(username: string, blocked: boolean): Promise<boolean>;
 }
 
@@ -146,6 +167,20 @@ export class DatabaseNetworkAdapter implements NetworkAdapter {
     return true;
   }
 
+  async ensureBandwidthQueue(): Promise<{ changed: boolean; created: boolean }> {
+    // No configured router to fail against. `changed: false` because nothing was
+    // written, which is the honest answer and also why callers check `live` first.
+    return { changed: false, created: false };
+  }
+
+  async removeBandwidthQueue(): Promise<boolean> {
+    return true;
+  }
+
+  async listBandwidthQueues(): Promise<SimpleQueue[]> {
+    return [];
+  }
+
   async block(): Promise<boolean> {
     return true;
   }
@@ -157,7 +192,8 @@ export class DatabaseNetworkAdapter implements NetworkAdapter {
  */
 export class MikrotikAdapter implements NetworkAdapter {
   readonly name = "MikroTik RouterOS";
-  readonly capabilities = "Active users, traffic, suspend/reconnect, provision, profile, block";
+  readonly capabilities =
+    "Active users, traffic, suspend/reconnect, provision, profile, block, bandwidth queues";
   readonly live = true;
 
   /**
@@ -353,6 +389,23 @@ export class MikrotikAdapter implements NetworkAdapter {
   async removeSecret(username: string): Promise<boolean> {
     if (this.sessionSource === "hotspot") return true; // nothing was created
     return this.client.removeSecret(username);
+  }
+
+  async ensureBandwidthQueue(input: {
+    name: string;
+    target: string;
+    maxDownload: number;
+    maxUpload: number;
+  }): Promise<{ changed: boolean; created: boolean }> {
+    return this.client.ensureSimpleQueue(input);
+  }
+
+  async removeBandwidthQueue(name: string): Promise<boolean> {
+    return this.client.removeSimpleQueue(name);
+  }
+
+  async listBandwidthQueues(): Promise<SimpleQueue[]> {
+    return this.client.listSimpleQueues();
   }
 
   async block(username: string, blocked: boolean): Promise<boolean> {

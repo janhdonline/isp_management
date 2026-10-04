@@ -32,6 +32,48 @@ export type RouterOsUser = {
   callerId: string | null;
 };
 
+/** A `/queue/simple` row, with the limits already back in Mbps. */
+export type SimpleQueue = {
+  id: string;
+  name: string;
+  target: string;
+  maxDownload: number;
+  maxUpload: number;
+};
+
+/**
+ * Reads one half of a `max-limit` pair back into Mbps.
+ *
+ * RouterOS writes `10M/5M`, `10m/5m`, and — on some versions — `10000000/5000000`
+ * for what is the same limit. `0` and a bare number mean something different on
+ * each, so the units are made explicit rather than assumed: a bare number is read
+ * as **bits per second**, because that is what RouterOS itself treats it as, and
+ * a limit read as 10x too large is a customer nobody can throttle.
+ */
+function readBandwidthHalf(value: string | null | undefined): number {
+  if (typeof value !== "string") return 0;
+  const match = /^(\d+(?:\.\d+)?)\s*([kKmMgG])?b?$/.exec(value.trim());
+  if (!match) return 0;
+  const n = Number(match[1]);
+  if (!Number.isFinite(n)) return 0;
+  const unit = match[2]?.toLowerCase();
+  const factor =
+    unit === "g" ? 1000 : unit === "m" ? 1 : unit === "k" ? 0.001 : 1 / 1_000_000;
+  return Number((n * factor).toFixed(3));
+}
+
+/** Splits `10M/5M` into its two halves. */
+function readBandwidthPair(value: string | null | undefined): [number, number] {
+  if (typeof value !== "string") return [0, 0];
+  const [down, up] = value.split("/");
+  return [readBandwidthHalf(down), readBandwidthHalf(up)];
+}
+
+/** The two halves of `max-limit`, as written by this client: `10M/5M`. */
+export function formatBandwidthPair(downloadMbps: number, uploadMbps: number): string {
+  return `${downloadMbps}M/${uploadMbps}M`;
+}
+
 export class RouterOsError extends Error {
   constructor(
     message: string,
@@ -395,6 +437,117 @@ export class RouterOsClient {
     const secret = await this.findSecret(name);
     if (!secret) return true; // already gone
     await this.call(`/ppp/secret/${encodeURIComponent(secret.id)}`, {
+      method: "DELETE",
+    });
+    return true;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Simple queues — bandwidth                                        */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Finds a simple queue by name.
+   *
+   * Same shape as `findSecret`, for the same reason: RouterOS's REST surface is a
+   * plain collection with no query parameters, so a lookup by name is a client-side
+   * find. That is what makes "is it already correct?" answerable in one GET, before
+   * anything is written.
+   */
+  async findSimpleQueue(name: string): Promise<SimpleQueue | null> {
+    const rows = await this.call<Record<string, string>[]>("/queue/simple");
+    if (!Array.isArray(rows)) return null;
+    const row = rows.find((r) => r.name === name);
+    if (!row?.[".id"]) return null;
+    const [maxDownload, maxUpload] = readBandwidthPair(row["max-limit"]);
+    return {
+      id: row[".id"],
+      name: row.name ?? name,
+      target: row.target ?? "",
+      maxDownload,
+      maxUpload,
+    };
+  }
+
+  /** Every simple queue, so a router page can show what this system manages. */
+  async listSimpleQueues(): Promise<SimpleQueue[]> {
+    const rows = await this.call<Record<string, string>[]>("/queue/simple");
+    if (!Array.isArray(rows)) return [];
+    return rows
+      .filter((r) => r.name)
+      .map((r) => {
+        const [maxDownload, maxUpload] = readBandwidthPair(r["max-limit"]);
+        return {
+          id: r[".id"] ?? "",
+          name: r.name ?? "",
+          target: r.target ?? "",
+          maxDownload,
+          maxUpload,
+        };
+      });
+  }
+
+  /**
+   * Creates the queue, or updates it if it is already there.
+   *
+   * **Idempotent by construction, and the second half is the interesting part.**
+   * The queue is read first and compared; if the target and both limits already
+   * match, *nothing is written*. Not a write that happens to be harmless — no PUT,
+   * no PATCH. RouterOS bumps a queue's counters and re-orders its list on every
+   * touch, so a nightly job that rewrites 2,000 identical queues makes the
+   * router's own diagnostics useless and buries the one queue that did change.
+   *
+   * Mbps becomes `10M`. A bare number is read by RouterOS as bits per second, so
+   * passing `10` to a customer sold 10 Mbps would shape them to 10 bits per second
+   * — which looks exactly like a dead line.
+   */
+  async ensureSimpleQueue(input: {
+    name: string;
+    target: string;
+    maxDownload: number;
+    maxUpload: number;
+  }): Promise<{ changed: boolean; created: boolean }> {
+    const existing = await this.findSimpleQueue(input.name);
+
+    if (existing) {
+      const same =
+        existing.target === input.target &&
+        existing.maxDownload === input.maxDownload &&
+        existing.maxUpload === input.maxUpload;
+      if (same) return { changed: false, created: false };
+
+      await this.call(`/queue/simple/${encodeURIComponent(existing.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          target: input.target,
+          "max-limit": formatBandwidthPair(input.maxDownload, input.maxUpload),
+        }),
+      });
+      return { changed: true, created: false };
+    }
+
+    await this.call("/queue/simple", {
+      method: "PUT",
+      body: JSON.stringify({
+        name: input.name,
+        target: input.target,
+        "max-limit": formatBandwidthPair(input.maxDownload, input.maxUpload),
+      }),
+    });
+    return { changed: true, created: true };
+  }
+
+  /**
+   * Removes the queue if it is there. Removing something already gone succeeds.
+   *
+   * **Removal, not zeroing** — the reasoning is in `src/lib/services/bandwidth.ts`.
+   * `max-limit=0` means different things on different RouterOS versions, and the
+   * failure mode is a customer whose line is dead for a reason nobody can find.
+   */
+  async removeSimpleQueue(name: string): Promise<boolean> {
+    const existing = await this.findSimpleQueue(name);
+    if (!existing) return true;
+    await this.call(`/queue/simple/${encodeURIComponent(existing.id)}`, {
       method: "DELETE",
     });
     return true;

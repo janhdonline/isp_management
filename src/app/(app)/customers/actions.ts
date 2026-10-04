@@ -20,6 +20,7 @@ import { checkPasswordStrength } from "@/lib/password";
 import { changePackage, deleteCustomer, disconnectCustomer, reconnectCustomer, renewCustomer, suspendCustomer } from "@/lib/services/customers";
 import { syncCustomerBilling } from "@/lib/services/billing";
 import { provisionOnuForCustomer } from "@/lib/services/tr069";
+import { syncBandwidthForCustomer } from "@/lib/services/bandwidth";
 import { bookActivationAdvance } from "@/lib/services/wallet";
 import {
   enforceProvision,
@@ -167,6 +168,12 @@ export async function createCustomerAction(
   // call fails the action is queued and the retry job carries it out.
   const provisioned = await maybeProvisionOnRouter(result, session.id);
 
+  // Bandwidth, from the same package the customer was just sold (Phase Q). Same
+  // ordering rule and the same reason: after the commit, queued rather than
+  // retried inline, so an unreachable router cannot stop the office saving a
+  // customer.
+  await syncBandwidthForCustomer(result.id, session.id);
+
   // The ONU push is a separate device and a separate adapter, but the same
   // ordering rule: after the commit, outside the transaction, queued rather than
   // retried inline.
@@ -269,8 +276,9 @@ export async function updateCustomerAction(
   // customer's device each time somebody corrects a spelling mistake.
   const beforeOnu = await prisma.customer.findUnique({
     where: { id },
-    select: { onuId: true },
+    select: { onuId: true, packageId: true },
   });
+  const beforePackage = beforeOnu;
 
   if (parsed.data.username) {
     const dup = await prisma.customer.findUnique({
@@ -327,10 +335,22 @@ export async function updateCustomerAction(
 
   await syncCustomerBilling(id);
 
-  const afterOnu = await prisma.customer.findUnique({
+  // Phase Q. A package change is the one edit that has to reach the router, because
+  // the queue is what enforces it — without this the customer keeps the old speed
+  // until something else happens to re-run, which on a quiet night is never.
+  //
+  // Only when the package actually changed: re-saving a name correction must not
+  // reprogram a router, for the same reason a re-save does not re-push an ONU's
+  // configuration.
+  const after = await prisma.customer.findUnique({
     where: { id },
-    select: { onuId: true },
+    select: { onuId: true, packageId: true },
   });
+  if (after?.packageId !== beforePackage?.packageId) {
+    await syncBandwidthForCustomer(id, session.id);
+  }
+
+  const afterOnu = { onuId: after?.onuId ?? null };
   const onuResult = await maybeProvisionOnu(id, afterOnu?.onuId, beforeOnu?.onuId);
 
   revalidatePath(`/customers/${id}`);
@@ -463,6 +483,13 @@ export async function suspendCustomerAction(
   // connection and a row lock for as long as the router takes to answer.
   if (result.success) {
     const enforced = await enforceSuspend(id);
+    // Phase Q. The queue comes off as well as the secret: a suspended customer
+    // keeping a queue for a package they are not on is a shape waiting to be
+    // applied to whoever gets that address next.
+    // No actor: Phase A's own suspend hook passes none here either, and the
+    // causative action — the suspension — is already audited against the person who
+    // did it. The queue follows from it; it is not a second decision.
+    await syncBandwidthForCustomer(id);
     if (!enforced.ok && !enforced.skipped) {
       // The suspension itself stands — it is committed and correct. What failed
       // is telling the router, which is queued for retry. Saying so is the whole
@@ -485,6 +512,13 @@ export async function reconnectCustomerAction(id: string): Promise<FormState> {
 
   if (result.success) {
     const enforced = await enforceReconnect(id);
+    // And back on again, at the current package's speeds. Not a remember-the-old-
+    // ones queue: the customer may have been moved to a different package while
+    // they were suspended.
+    // No actor: Phase A's own suspend hook passes none here either, and the
+    // causative action — the suspension — is already audited against the person who
+    // did it. The queue follows from it; it is not a second decision.
+    await syncBandwidthForCustomer(id);
     if (!enforced.ok && !enforced.skipped) {
       return {
         success: `Customer reconnected in the system, but the router was not reached: ${enforced.detail} It will be retried automatically.`,

@@ -2147,6 +2147,127 @@ unimportant.
 
 ------------------------------------------------------------------------
 
+## 40. Bandwidth Enforcement on MikroTik
+
+`Package.downloadSpeed` and `uploadSpeed` were a billing number and nothing more. A
+customer sold 10 Mbps and a customer sold 50 Mbps both got whatever the router felt
+like, and the only way to find out was to log into the device by hand. The package
+was, in the sense that mattered, fiction.
+
+This phase programs a MikroTik **simple queue** per subscriber, named
+`isp-<username>` — the same prefix Phase A uses for the firewall address list, so
+everything this application puts on a router is recognisable by eye and a
+half-deleted one can be found with a single filter.
+
+## Three flags, three different questions
+
+| Flag | Question | Default |
+|---|---|---|
+| `autoProvision` | may this system write PPP secrets here? | off |
+| `useRadius` | does authentication live on the router or in RADIUS? | off |
+| `autoQueues` | may this system shape the **bandwidth** here? | off |
+
+All three default off, and a router can answer them differently. `autoProvision` on
+with `autoQueues` off is a normal and useful combination: provisioning a secret
+without shaping anything. **Nothing here runs until `autoQueues` is on**, which is
+what makes this phase zero behaviour change until an admin opts a router in.
+
+## RADIUS wins, and is checked first
+
+On a router with `useRadius`, this module does nothing. The Mikrotik-Rate-Limit
+attribute already carries the same number — it is written on every Access-Request
+from the package — and two limiters on one subscriber means the stricter one wins,
+which is nobody's decision.
+
+**RADIUS is checked before `autoQueues`**, which is the opposite of the order the
+gates read. A RADIUS router almost always has `autoQueues` off too, and reporting
+"queues are switched off" there is true and useless: it answers a question the
+operator did not ask. What they want is why this router behaves differently from
+the one they just configured. A test caught this by asserting on the wrong reason.
+
+Turning `autoQueues` on for a RADIUS router is also refused at the switch, with the
+same explanation, rather than accepted and ignored.
+
+## Suspend **removes** the queue rather than zeroing it
+
+`max-limit=0` means different things on different RouterOS versions: on some it is
+unlimited, on some it blocks. That is a coin flip with a customer's connection on
+it, and the failure mode — a line dead for a reason nobody can find — is much worse
+than the alternative.
+
+Removal is also the honest inverse of adding. A suspended customer's secret is
+already disabled by Phase A, so the queue is not what is keeping them off; it is
+there to be taken away when they are suspended and put back when they are not, and
+"put back" has to mean the limits they have *now*. A reconnect re-reads the
+package, because a customer may have been moved while they were suspended.
+
+## No zero-speed queue, ever
+
+A package with zero or null speeds is **skipped with a recorded reason**. It is
+tempting to read a missing number as 0 and shape the customer to nothing, and that
+turns a data-entry omission into an outage for somebody who has paid. A package with
+no speeds is a package nobody has finished entering.
+
+The speeds are checked *after* the suspension check, deliberately: removing a queue
+needs no numbers, so a customer suspended on a half-filled-in package must still
+have their queue taken away.
+
+## Idempotent means no write at all
+
+`ensureSimpleQueue` reads the queue, compares the target and both limits, and
+returns `changed: false` **without writing** if they already match. Not a write that
+happens to be harmless — no PUT, no PATCH.
+
+The second part is that "harmless" is not an accident to be assumed. RouterOS bumps
+a queue's counters and re-orders its list on every touch, so a nightly job rewriting
+2,000 identical queues makes the router's own diagnostics useless and buries the one
+queue that did change.
+
+## Mbps is not a bare number
+
+RouterOS reads `10` as **bits per second**. Passing the number straight from the
+package would shape a customer sold 10 Mbps to 10 bits per second — which looks
+exactly like a dead line. Limits are written as `10M/2M`, and read back in whatever
+spelling the router used: `50m`, `50M` and `50000000` all come back as 50.
+
+## The queue row stores nothing
+
+`payload` is **null** on both bandwidth actions. The limits are re-read from the
+package at attempt time, so a customer who changed package *while their router was
+unreachable* gets the one they are on now — and nothing on the row could be a
+credential.
+
+The row is written **before** the router is called, for the same reason as every
+other enforcement path: a crash between the two must not lose the request, and the
+failure mode of losing it is a customer left throttled to a speed they upgraded from
+three months ago. A failure goes back to `Pending` with the reason — never `Failed`,
+which is terminal and unretried.
+
+## The gate can close while a retry waits
+
+An admin can switch `autoQueues` off, or move a router onto RADIUS, while a queued
+action is sitting in the outbox. The retry re-reads the router and **drops** the
+action rather than forcing it, and marks the row `Done` with the reason. Forcing a
+queue onto a router that was just opted out is exactly the failure `autoQueues`
+exists to prevent, and the queued row is older than the decision that forbids it.
+
+## The audit
+
+The router page lists what this system manages there: the queue, its target, both
+limits, and the package it came from. Queues are matched back to customers **by
+name**, never by a stored RouterOS id — an id is a reference to a row on hardware
+that can be rebooted, re-imaged or rebuilt, and a stale id fails in a way a name
+never does.
+
+A queue that matches no customer is reported as unattributed rather than hidden,
+because somebody put it there on purpose.
+
+Switching the flag on is deliberately **not** retroactive. Existing subscribers are
+shaped the next time something about them changes. Rewriting a thousand queues at
+once, with nobody watching, is how a router becomes slow on a Tuesday afternoon.
+
+------------------------------------------------------------------------
+
 ## Final Requirement
 
 The final UI must feel like **one unified ISP operating system**, not
