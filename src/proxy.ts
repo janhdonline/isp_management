@@ -11,6 +11,15 @@ const PUBLIC_PATHS = [
   "/forgot-password",
   "/reset-password",
   "/api/auth/login",
+  /// The second step of sign-in (Phase S). It **has** to be public, and the reason
+  /// is the whole design: a user who has just proved their password and been asked
+  /// for a six-digit code does not have a session yet — that is what the challenge
+  /// is for. Session-gating this route would make 2FA impossible for everybody.
+  ///
+  /// Safe because the route authorises nothing on its own: it requires an
+  /// HMAC-signed challenge token that is only ever minted after a successful
+  /// password comparison, and it is rate-limited on the account that token names.
+  "/api/auth/totp",
   "/api/health",
 ];
 

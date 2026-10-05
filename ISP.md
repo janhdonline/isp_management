@@ -2393,6 +2393,128 @@ misleading.
 
 ------------------------------------------------------------------------
 
+## 42. Staff Two-Factor Authentication (TOTP)
+
+Every role signed in with a password alone. One phished administrator password was
+the whole attack — no second factor existed anywhere in the system.
+
+## The two things that make it worth having
+
+**There is no bypass path once enrolled.** Not for a convenience flag, not for a
+role, not for "just this once". There is a test section called *"no bypass path"*
+that walks each way past it could exist: the password step alone returns a challenge
+rather than a session; a challenge with no code does not pass; an empty
+`require2fa` does not disable an enrolled user; and neither does removing their
+role entirely. That is a claim about the **absence** of a path, which is only
+provable by looking for the paths that might exist.
+
+**A challenge token is not a session.** The usual design is "logged in, but
+limited", and it is a trap: every route then has to remember to check the flag, and
+one that forgets is a complete bypass. A challenge token here authorises exactly
+two things — confirming an enrollment and presenting a code — and carries no
+permissions. HMAC-signed with the session key, only ever minted after a successful
+password comparison, five-minute lifetime.
+
+## The maths is a library, checked against the RFC
+
+RFC 6238 is thirty lines of HMAC, and getting it subtly wrong is a security bug
+that still *looks* like it works — a code that verifies against a clock one step
+off is indistinguishable from a correct implementation until somebody's phone
+drifts. So the test checks `otpauth` against the RFC's **own published vectors**
+rather than trusting it:
+
+    T=59         → 94287082     (SHA1, 8 digits)
+    T=1111111109 → 07081804
+
+Plus the window, because ±1 step is the requirement: 30 seconds of drift either
+way is accepted, 60 seconds is not. A six-digit space is a million times smaller
+than a password, so **the rate limit is the thing that makes a second factor
+meaningful** — and the same `checkMemoryRateLimit` / `checkDatabaseRateLimit`
+budget as the password step, keyed on the account the challenge names. Five wrong
+codes lock the account, and the password step is locked too, because the budget is
+per account rather than per step.
+
+## Constant time, by not comparing
+
+The rule says verification must be constant-time. The implementation satisfies it
+by **never comparing**: `otpauth` returns the matching step's delta or `null`, and
+there is no string equality on a secret-derived value for a timing attack to
+measure. Backup-code hashes *are* compared, and those use `timingSafeEqual`.
+
+## The secret at rest, and shown exactly once
+
+AES-256-GCM, so a tampered ciphertext fails to decrypt rather than decrypting into
+garbage that would then be treated as a secret. The key is derived from
+`AUTH_SECRET` by HKDF with a fixed label, so a deployment manages **one** secret
+rather than two — a second one is a second thing to forget, and forgetting it means
+every user's second factor has to be reset. `TOTP_ENCRYPTION_KEY` overrides it.
+
+**The consequence operators need told:** rotating `AUTH_SECRET` rotates this too,
+and every stored TOTP secret becomes undecryptable. That is the safe direction — an
+attacker with the old secret cannot read the new column — but a key rotation costs
+one 2FA reset per enrolled user.
+
+Nothing ever sends the secret to a browser except the enrollment response. A second
+factor whose secret an administrator can read out of the database is a second
+factor an attacker who reads the database can pass.
+
+Confirmation checks the code against the **stored** secret rather than one the
+caller supplies, so a stale QR cannot confirm a *different* secret than the one
+that was scanned. There is a test for exactly that.
+
+## Backup codes: hashed, and burned by removal
+
+A plaintext recovery code in the user table is a second password for every account
+using 2FA, which defeats the point of having one. So they are stored as SHA-256
+digests — deliberately **not** bcrypt, unlike `password.ts`: these have 40 bits of
+entropy so there is nothing to brute-force, and a slow KDF would make every sign-in
+attempt wait on purpose.
+
+Single-use is implemented as **removal from the stored list**, not a flag on it. A
+flag leaves every spent hash in the row for ever, and "used" is better expressed as
+the absence. A test asserts the spent hash is gone rather than marked.
+
+## The policy requires, it does not grant
+
+`security.require2fa` is a comma-separated list of roles. Two independent reasons
+to owe a second factor — the user turned it on, or their role is listed — and an
+**enrolment outranks both**. Turning a role on does not turn anybody's 2FA on; it
+requires it, and the only way past an enabled factor stays a valid code. The
+alternative would be a role change quietly removing somebody's second factor.
+
+## Two decisions worth flagging
+
+**`Users` is a new permission resource.** "Reset this user's 2FA" needed a gate
+and there was nothing to gate on — staff accounts had no permission resource at
+all. Adding one also silently handed **Account Managers** seven new permissions
+through their blanket "everything except Settings" rule, which would have let a
+billing role disable a colleague's MFA. The rule now excludes `Users` alongside
+`Settings`.
+
+**No QR image.** The setup screen shows the `otpauth://` URI and the base32 secret,
+and every authenticator app has an "enter setup key" path. A QR would need a
+renderer: `qrcode` drags in a PNG encoder and a CLI parser, or it would have to be
+hand-rolled — and a QR that scans to the *wrong* secret is not a cosmetic bug, it
+is a second factor that either locks a user out or is readable off a shared screen.
+Hand-rolling could not be validated here (verifying a QR means decoding it), so the
+text form was the honest choice.
+
+## A note on `auth.ts` and testability
+
+`auth.ts` opens with `import "server-only"`, which is right — its cookie helpers
+belong on the server — and which also makes the whole file **untestable**: the
+marker resolves to a module that throws outside a `react-server` bundle. Two
+services here (`wallet.ts`, `corporate.ts`) already carry comments about working
+around that. This phase applies the same workaround to sign-in: the **decision**
+lives in `src/lib/services/two-factor.ts` with no cookie in it, and `auth.ts` keeps
+the four lines that need `next/headers`.
+
+Installing `server-only` as a dependency was tried first and makes it *worse*, not
+better: outside a `react-server` condition it resolves to the module whose whole
+purpose is to throw.
+
+------------------------------------------------------------------------
+
 ## Final Requirement
 
 The final UI must feel like **one unified ISP operating system**, not

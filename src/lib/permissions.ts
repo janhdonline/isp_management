@@ -48,7 +48,15 @@ export const ROLE_GRANT_RULES: Record<
   "Account Manager": (p) =>
     // Everything except the system configuration, and except the two deletions
     // that would lose records a manager has no business deleting.
-    p.resource !== "Settings" && !["employees.delete", "support.delete"].includes(p.key),
+    //
+    // Phase S added a `Users` resource, and this blanket rule picked it up without
+    // anybody deciding: an account manager — a billing role — would have been able
+    // to turn off a colleague's two-factor authentication, which is a security
+    // control rather than a billing one. So `Users` is excluded alongside
+    // `Settings`.
+    p.resource !== "Settings" &&
+    p.resource !== "Users" &&
+    !["employees.delete", "support.delete"].includes(p.key),
 
   Technician: (p) =>
     ["Network", "Support", "Customers", "Inventory"].includes(p.resource) &&

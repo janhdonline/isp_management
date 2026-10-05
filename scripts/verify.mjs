@@ -1159,6 +1159,59 @@ console.log("\nProrated package changes (Phase R)");
   check("the customers page renders", customers.status === 200, `got ${customers.status}`);
 }
 
+/* ---------------------------------------------------------------- */
+console.log("\nStaff two-factor authentication (Phase S)");
+{
+  // The ACS/second-factor surface is the only route that can be probed without a
+  // session, so its refusal is checked first.
+  const noToken = await fetch(`${BASE}/api/auth/totp`);
+  check("the code step refuses a request with no challenge token", noToken.status === 400, `got ${noToken.status}`);
+
+  const forged = await fetch(`${BASE}/api/auth/totp`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: "forged.token", code: "123456" }),
+  });
+  check("the code step refuses a forged token", forged.status === 401, `got ${forged.status}`);
+
+  const badBody = await fetch(`${BASE}/api/auth/totp`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: "x" }),
+  });
+  check("the code step rejects a malformed body", badBody.status === 400, `got ${badBody.status}`);
+
+  // A wrong password must never return a challenge: if it did, the token would be
+  // something to attack separately from the password.
+  const login = await fetch(`${BASE}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "admin@isp.com", password: "definitely-not-it" }),
+  });
+  const loginBody = await login.json();
+  check(
+    "a wrong password gets no challenge token",
+    login.status === 401 && !loginBody.needsSecondFactor,
+    `status ${login.status}, needsSecondFactor ${Boolean(loginBody.needsSecondFactor)}`
+  );
+
+  const security = await api("/settings/security");
+  check("the security settings page renders", security.status === 200, `got ${security.status}`);
+  const html = typeof security.body === "string" ? security.body : "";
+  check("it states the two-factor policy", /security\.require2fa|two-factor authentication/i.test(html));
+  check(
+    "it says the policy requires rather than grants",
+    /require|forced|must/i.test(html),
+    "the distinction between a policy and a switch matters here"
+  );
+
+  // Reachable from the Settings nav, which is how an operator gets to it. The nav
+  // is server-rendered on every page, so any signed-in page proves the entry exists.
+  const settingsIndex = await api("/settings");
+  const idxHtml = typeof settingsIndex.body === "string" ? settingsIndex.body : "";
+  check("it is linked from the Settings nav", idxHtml.includes("/settings/security"));
+}
+
 console.log(`\n${"─".repeat(46)}`);
 console.log(`  ${pass} passed, ${fail} failed`);
 console.log(`${"─".repeat(46)}\n`);

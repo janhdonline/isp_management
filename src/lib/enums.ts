@@ -211,6 +211,14 @@ export const STOCK_MOVEMENT_TYPES = ["IN", "OUT", "ADJUST"] as const;
 
 export const PERMISSION_RESOURCES = [
   "Customers",
+  /// Phase S. Staff accounts had no permission resource of their own, which meant
+  /// "reset this user's two-factor" had nothing to be gated on — and every
+  /// privileged action on a user was implicitly administrator-only because nothing
+  /// else could be granted. This gives that gate a name.
+  ///
+  /// Only `Administrator` is granted it by `ROLE_GRANT_RULES`, so existing roles
+  /// are unaffected.
+  "Users",
   "Packages",
   "Billing",
   "Payments",

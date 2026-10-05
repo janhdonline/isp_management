@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { loginWithPassword } from "@/lib/auth";
+import { loginStep1 } from "@/lib/auth";
 
 const schema = z.object({
   email: z.string().email(),
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, error: "Invalid credentials payload" }, { status: 400 });
   }
 
-  const result = await loginWithPassword(parsed.data.email, parsed.data.password, clientIp(request));
+  const result = await loginStep1(parsed.data.email, parsed.data.password, clientIp(request));
 
   if (!result.ok) {
     if (result.reason === "locked") {
@@ -44,6 +44,12 @@ export async function POST(request: Request) {
     // The same answer for an unknown address and a wrong password, so the
     // endpoint cannot be used to discover which accounts exist.
     return Response.json({ ok: false, error: "Invalid email or password" }, { status: 401 });
+  }
+
+  // A second factor is owed. **No cookie is set**: the client is told what to do
+  // next and has nothing to browse with until it comes back with a code.
+  if ("pending" in result) {
+    return Response.json({ ok: false, needsSecondFactor: true, ...result.pending }, { status: 401 });
   }
 
   const { session } = result;

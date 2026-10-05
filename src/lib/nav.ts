@@ -211,6 +211,7 @@ export const NAV: NavItem[] = [
       { label: "General", href: "/settings", permission: "settings.view" },
       { label: "Billing", href: "/settings/billing", permission: "settings.view" },
       { label: "Network", href: "/settings/network", permission: "settings.view" },
+      { label: "Security", href: "/settings/security", permission: "settings.view" },
       { label: "Users & Roles", href: "/settings/users", permission: "settings.view" },
       { label: "SMS / API", href: "/settings/api", permission: "settings.view" },
       { label: "Notifications", href: "/settings/notifications", permission: "settings.view" },

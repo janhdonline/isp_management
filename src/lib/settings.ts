@@ -4,6 +4,10 @@ export const SETTING_GROUPS = [
   "General",
   "Billing",
   "Network",
+  /// Phase S. Its own group because "which roles must have a second factor" is not
+  /// a user-management setting — it is a policy about the whole staff, and burying
+  /// it on the users page is how it stays off.
+  "Security",
   "Users",
   "API",
   "Notifications",
@@ -199,6 +203,15 @@ export const DEFAULT_SETTINGS: {
   /// read back to the customer, and nothing in this module stores a secret.
   { key: "tr069.wifiPasswordPolicy", value: "pppoe", group: "Network" },
   { key: "tr069.provisionTimeoutSec", value: "20", group: "Network" },
+
+  /// Phase S. Roles whose members cannot sign in with a password alone.
+  ///
+  /// Empty by default, because turning this on locks out every existing user in
+  /// those roles on their next sign-in until they enroll — which is the point, and
+  /// also a support call. Set it deliberately, role by role, and tell people first.
+  ///
+  /// Comma-separated role *names*, matched case-insensitively: "Admin,Manager".
+  { key: "security.require2fa", value: "", group: "Security" },
 
   /// Phase O. How many ONUs one PON port carries, for cabinets that have not set
   /// their own.

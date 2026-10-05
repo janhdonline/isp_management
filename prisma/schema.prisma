@@ -33,6 +33,25 @@ model User {
   /// this value, so a cookie signed before the bump stops verifying — which is
   /// how a stateless JWT session is ended early.
   tokenVersion Int      @default(0)
+  /// The TOTP shared secret, AES-256-GCM encrypted. Write-only: nothing in this
+  /// application ever sends it back to a browser, and the plaintext is shown once at
+  /// enrollment so it can be typed into an authenticator by hand.
+  totpSecretEnc String?
+  /// Whether a valid code is *required* at sign-in.
+  ///
+  /// Separate from `totpSecretEnc` being present, so that an administrator can
+  /// revoke a user's second factor by clearing one flag without destroying an
+  /// enrollment the user may be about to re-confirm. And separate from
+  /// `security.require2fa`, which is a role-level policy: this column is the
+  /// user's own decision, and it is what makes the answer to "can this person log
+  /// in with a password alone" a fact about them rather than a setting.
+  totpEnabled   Boolean   @default(false)
+  totpEnabledAt DateTime?
+  /// Single-use recovery codes, **hashed**. Never stored in plaintext, for the
+  /// same reason passwords are not: this column is read by anyone who can read the
+  /// user table, and a plaintext recovery code is a password.
+  backupCodesEnc  String?
+  backupCodesUsedAt DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

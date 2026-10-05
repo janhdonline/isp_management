@@ -1,7 +1,21 @@
 import "server-only";
+
+/**
+ * Re-exported rather than defined here: `secretKey` is pure, and keeping it in this
+ * file made it unreachable from a test. See `src/lib/secret-key.ts`.
+ */
+export { secretKey } from "@/lib/secret-key";
+export type { SessionUser } from "@/lib/session-shape";
 import { cookies, headers } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
-import { randomBytes } from "node:crypto";
+import { secretKey } from "@/lib/secret-key";
+import {
+  completeChallenge,
+  evaluateSignIn,
+  type Step1Result,
+  type Step2Result,
+} from "@/lib/services/two-factor";
+import type { SessionUser } from "@/lib/session-shape";
 import { prisma } from "@/lib/prisma";
 import { type PermissionKey } from "@/lib/permissions";
 
@@ -17,49 +31,6 @@ const MAX_AGE = 60 * 60 * 12; // 12h
  * a deployment mistake, so it is reported loudly and, in production, refused
  * outright rather than quietly downgraded to something guessable.
  */
-let cachedKey: Uint8Array | null = null;
-
-function secretKey() {
-  if (cachedKey) return cachedKey;
-
-  const configured = process.env.AUTH_SECRET?.trim();
-  if (!configured) {
-    const message =
-      "AUTH_SECRET is not set. Generate one with:\n" +
-      '  node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64url\'))"\n' +
-      "and put it in .env — anyone who knows this value can forge a session cookie.";
-
-    if (process.env.NODE_ENV === "production") {
-      throw new Error(message);
-    }
-    console.warn(`[auth] ${message}\n[auth] Using a random per-process key; sessions end on restart.`);
-    cachedKey = new TextEncoder().encode(randomBytes(32).toString("base64url"));
-    return cachedKey;
-  }
-
-  if (configured.length < 32) {
-    throw new Error("AUTH_SECRET must be at least 32 characters long.");
-  }
-
-  cachedKey = new TextEncoder().encode(configured);
-  return cachedKey;
-}
-
-export type SessionUser = {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  roleId: string | null;
-  permissions: string[];
-  isAdmin: boolean;
-  /**
-   * Copied from the user row at sign-in. `getSession` compares it with the
-   * current value, so a password change or a revoke ends every cookie that was
-   * issued before it, without keeping a server-side session list.
-   */
-  tokenVersion: number;
-};
 
 export async function signToken(user: SessionUser) {
   return new SignJWT({
@@ -212,75 +183,109 @@ export async function requirePermissionFromRequest(
   return s;
 }
 
-export type LoginFailure =
-  | { ok: false; reason: "locked"; retryAfterSec: number }
-  | { ok: false; reason: "invalid" }
-  | { ok: true; session: SessionUser };
-
 /**
- * Signs a user in, counting failures against the account.
+ * Password-only sign-in, for callers that do not go through the two-step flow.
  *
- * The lockout is checked before the password is compared, so a locked account
- * costs no bcrypt work — which is also what stops the endpoint being used to
- * burn CPU. A successful sign-in clears the counter, so one mistyped password
- * does not start a countdown that only an administrator can stop.
+ * Kept because the login *form* action still uses it for accounts with no second
+ * factor, and because it is the behaviour the whole application had before Phase S.
+ * Anything that should honour `security.require2fa` must call `loginStep1`
+ * instead — this function has no idea a second factor exists, which is exactly why
+ * it is not what the login route uses.
  */
 export async function loginWithPassword(
   email: string,
   password: string,
   clientIp = "unknown"
 ): Promise<LoginFailure> {
-  const rateLimit = await import("@/lib/rate-limit");
-
-  const inMemory = rateLimit.checkMemoryRateLimit(email, clientIp);
-  if (!inMemory.allowed) {
-    return { ok: false, reason: "locked", retryAfterSec: inMemory.retryAfterSec ?? 60 };
-  }
-  const persisted = await rateLimit.checkDatabaseRateLimit(email);
-  if (!persisted.allowed) {
-    return { ok: false, reason: "locked", retryAfterSec: persisted.retryAfterSec ?? 60 };
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { email },
-    include: { role: { include: { permissions: { include: { permission: true } } } } },
-  });
-  if (!user) {
-    // Count a miss for an unknown address too: otherwise the response time
-    // tells an attacker which addresses exist.
-    rateLimit.recordFailedAttempt(email, clientIp);
-    await rateLimit.recordDatabaseAttempt(email, clientIp);
+  const result = await loginStep1(email, password, clientIp);
+  if (!result.ok) return result;
+  if (result.kind === "pending") {
+    // A second factor is owed, and this function cannot serve one — so it must not
+    // pretend the sign-in succeeded, and it must not leave a cookie behind either.
+    // `loginStep1` has already cleared it.
     return { ok: false, reason: "invalid" };
   }
-  if (user.status !== "Active") {
-    rateLimit.recordFailedAttempt(email, clientIp);
-    await rateLimit.recordDatabaseAttempt(email, clientIp);
-    return { ok: false, reason: "invalid" };
-  }
+  return { ok: true, session: result.session, method: "password" };
+}
 
-  const bcrypt = await import("bcryptjs");
-  const ok = await bcrypt.compare(password, user.passwordHash);
-  if (!ok) {
-    rateLimit.recordFailedAttempt(email, clientIp);
-    await rateLimit.recordDatabaseAttempt(email, clientIp);
-    return { ok: false, reason: "invalid" };
-  }
+export type LoginFailure =
+  | { ok: false; reason: "locked"; retryAfterSec: number }
+  | { ok: false; reason: "invalid" }
+  /**
+   * `method` is how the second factor was satisfied, or `"password"` when there was
+   * none. Reported rather than inferred afterwards: a backup code's *shape* cannot
+   * be told from a TOTP code's by looking at it, and a caller that guesses gets it
+   * wrong exactly when somebody needs telling that they have two codes left.
+   */
+  | { ok: true; session: SessionUser; method: "password" | "totp" | "backup" };
 
-  rateLimit.clearAttempts(email, clientIp);
-  await rateLimit.clearDatabaseAttempts(email);
-
-  const permissions = user.role?.permissions.map((rp) => rp.permission.key) ?? [];
-  const session: SessionUser = {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role?.name ?? "Staff",
-    roleId: user.roleId,
-    permissions,
-    isAdmin: user.role?.name === "Administrator",
-    tokenVersion: user.tokenVersion,
+/**
+ * The outcome of the password step when a second factor is still owed.
+ *
+ * `kind: "enroll"` is not a soft failure and must not be readable as one: the user
+ * has proved who they are and is being asked to finish setting up. They have **no
+ * session**, so there is nothing to bypass the challenge with.
+ */
+export type PendingSecondFactor = {
+  ok: true;
+  pending: {
+    token: string;
+    kind: "verify" | "enroll";
+    email: string;
+    /** How long the challenge is good for. Five minutes is long enough to find a
+     *  phone and short enough that a token left in a browser is not a standing key. */
+    expiresInSec: number;
   };
-  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-  await setSessionCookie(session);
-  return { ok: true, session };
+};
+
+export type LoginStep1 = LoginFailure | PendingSecondFactor;
+
+/**
+ * The first half of a sign-in, cookie included.
+ *
+ * A pending challenge clears any session cookie on the way through. It has to:
+ * `verifyPasswordStep` may have just been called by a flow that left one behind,
+ * and "you have proved your password but you are not signed in" has to be true of
+ * the browser as well as of this function's return value.
+ */
+export async function loginStep1(
+  email: string,
+  password: string,
+  clientIp = "unknown"
+): Promise<Step1Result> {
+  const result = await evaluateSignIn(email, password, clientIp);
+
+  if (!result.ok) return result;
+
+  if (result.kind === "pending") {
+    await clearSessionCookie();
+    return result;
+  }
+
+  await prisma.user.update({
+    where: { id: result.session.id },
+    data: { lastLoginAt: new Date() },
+  });
+  await setSessionCookie(result.session);
+  return result;
+}
+
+/**
+ * The second half, cookie included. The decision is in
+ * `src/lib/services/two-factor.ts`; this is the part that needs `next/headers`.
+ */
+export async function loginStep2(
+  token: string,
+  code: string,
+  clientIp = "unknown"
+): Promise<Step2Result> {
+  const result = await completeChallenge(token, code, clientIp);
+  if (result.ok && result.kind === "session") {
+    await prisma.user.update({
+      where: { id: result.session.id },
+      data: { lastLoginAt: new Date() },
+    });
+    await setSessionCookie(result.session);
+  }
+  return result;
 }
