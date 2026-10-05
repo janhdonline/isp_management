@@ -2515,6 +2515,101 @@ purpose is to throw.
 
 ------------------------------------------------------------------------
 
+## 43. Password Reset by Email
+
+A locked-out administrator needed database surgery. Most of the flow already
+existed — `PasswordReset`, the `/forgot-password` and `/reset-password` pages, the
+token hash, the session revocation. What it lacked was the property that makes the
+whole thing safe.
+
+## The burn was not atomic, and that was the bug worth the phase
+
+The token was read, checked, and then — in a **separate statement, by primary key,
+unconditionally** — stamped `usedAt`:
+
+    // before
+    const row = await prisma.passwordReset.findUnique({ where: { tokenHash } });
+    if (row.usedAt) throw ...;
+    await prisma.$transaction([
+      prisma.user.update({ ... }),
+      prisma.passwordReset.update({ where: { id: row.id }, data: { usedAt: new Date() } }),
+    ]);
+
+Two requests carrying the same link both read `usedAt === null`, both passed the
+check, and both set the password.
+
+That matters more than it first looks. "This link is single-use" is what makes a
+link safe to send over email at all: a link that leaks from a shared inbox, a proxy
+log, or a forwarded message is worthless *after* it is used. A burn two requests can
+pass means the leaked link is worth something twice, and the second use is the one
+an attacker gets.
+
+The fix is a conditional update — `updateMany({ where: { id, usedAt: null } })` —
+inside the same transaction as the password change, treating `count === 0` as "someone
+else got there first". Exactly one concurrent use can win, because exactly one can
+make that conditional write true. There is a test for two and one for eight.
+
+Two smaller things came with it:
+
+  - **A reset invalidates its sibling links.** Two requests from one inbox is
+    ordinary — a second request while the first is in flight — and only one should
+    still work afterwards.
+  - **The hash is computed before the transaction opens.** bcrypt at cost 12 is about
+    a quarter of a second, and a transaction held open across it pins a connection
+    and a row lock for that whole time.
+
+## The timing side channel, which the generic message did not close
+
+The response text was already identical for a known and an unknown address. The
+*timing* was not: `requestPasswordReset` awaited the SMTP send, so a known address
+took tens of milliseconds longer than an unknown one, which is exactly the oracle the
+generic message exists to remove.
+
+So the send is now **started after the response** — `requestPasswordReset` returns
+the message plus a not-yet-started `send`, and the action answers first. The
+remaining difference between the two paths is one `INSERT`: the same user lookup,
+the same settings read, the same token generation, and then nothing is written for an
+unknown address. Sub-millisecond, against an SMTP round trip nobody waits on.
+
+Claiming *more* than that would be overstating it. "Identical response" can be
+exact in shape and in content; in timing it can be narrowed to a single database
+statement, and it is.
+
+## The rate limit cannot be the login budget
+
+`rate-limit.ts` keys on the account email and shares its budget with the password
+step. That is correct for sign-in and **catastrophic for resets**: anybody could
+type a colleague's email into the forgot-password form five times and lock them out
+of signing in entirely, without ever knowing a password. A reset request is
+unauthenticated by definition, so it cannot be allowed to spend an authenticated
+budget.
+
+`reset-rate-limit.ts` is the same *shape* over its own keyspace: three requests per
+address per fifteen minutes, ten per source address — higher on the IP side because
+several staff share an office NAT and a shared limit would let one of them lock out
+the rest. There is a test that six reset requests leave signing in working.
+
+The per-address budget deliberately holds **across source addresses**. The threat
+is somebody hammering one victim's inbox, and rotating their own IP is the obvious
+way to keep going; a limit keyed on the pair would be defeated by changing a header.
+
+## Everything else that was already right, and is now tested
+
+- The raw token is never stored — 32 bytes of `randomBytes`, SHA-256 in the column.
+  A test greps the whole row for it.
+- The token is never logged in production. Without a configured relay the link goes
+  to the console, because a developer locked out of their own instance needs a way
+  in — but only when `NODE_ENV !== "production"`, where it would be a live account's
+  credential written somewhere it was never meant to be.
+- A reset ends every existing session (`tokenVersion` is bumped). A reset is what
+  somebody does when they think a password has leaked; leaving the old sessions
+  alive would defeat the point.
+- Both the **request** and the **completion** are audit-logged. The request is the
+  interesting one: a burst of reset requests for one account is the shape of an
+  account-takeover attempt, and this is where it shows up.
+
+------------------------------------------------------------------------
+
 ## Final Requirement
 
 The final UI must feel like **one unified ISP operating system**, not

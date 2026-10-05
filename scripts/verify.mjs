@@ -1212,6 +1212,25 @@ console.log("\nStaff two-factor authentication (Phase S)");
   check("it is linked from the Settings nav", idxHtml.includes("/settings/security"));
 }
 
+/* ---------------------------------------------------------------- */
+console.log("\nPassword reset (Phase T)");
+{
+  const page = await api("/forgot-password");
+  check("the forgot-password page renders", page.status === 200, `got ${page.status}`);
+  const html = typeof page.body === "string" ? page.body : "";
+  check("it asks for an email address", /email/i.test(html));
+
+  // The enumeration rule itself is not asserted here. It is a comparison between two
+  // responses that differ only in an email address, and a server action cannot be
+  // POSTed meaningfully from outside Next — so the assertion lives in
+  // `tests/password-reset.test.mjs`, which compares the two service results
+  // byte-for-byte, rather than here pretending to check it.
+  const unknown = await api("/reset-password?token=not-a-real-token");
+  check("the reset page renders", unknown.status === 200, `got ${unknown.status}`);
+  const resetHtml = typeof unknown.body === "string" ? unknown.body : "";
+  check("it refuses to show a form for a token that does not exist", /not valid|expired|invalid|used/i.test(resetHtml));
+}
+
 console.log(`\n${"─".repeat(46)}`);
 console.log(`  ${pass} passed, ${fail} failed`);
 console.log(`${"─".repeat(46)}\n`);

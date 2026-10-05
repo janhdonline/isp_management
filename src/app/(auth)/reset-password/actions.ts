@@ -17,9 +17,16 @@ const requestSchema = z.object({
 });
 
 /**
- * Starts a reset. The message is the same whether or not the address is
- * known — that is the point, and it is why the form cannot be used to discover
- * who has an account.
+ * Starts a reset.
+ *
+ * The email is sent **after** this returns, and that ordering is a security
+ * property rather than a latency one: awaiting SMTP here would make the response
+ * for a known address measurably slower than for an unknown one, and the caller can
+ * time that. So `requestPasswordReset` hands back the message plus a not-yet-started
+ * send, and the message goes back to the browser first.
+ *
+ * The failures are logged rather than surfaced — there is nobody left to tell, and
+ * the token simply expires unused.
  */
 export async function requestResetAction(
   _prev: ResetState,
@@ -34,11 +41,34 @@ export async function requestResetAction(
   }
 
   try {
-    const result = await requestPasswordReset(parsed.data.email);
+    const result = await requestPasswordReset(parsed.data.email, {
+      clientIp: await clientIp(),
+    });
+    if (result.send) {
+      // Not awaited, and its rejection handled: this runs past the response.
+      void result.send().catch((e) => {
+        console.error("[auth] reset email failed:", e instanceof Error ? e.message : e);
+      });
+    }
     return { success: result.message };
   } catch (e) {
     return { formError: e instanceof Error ? e.message : "Could not start the reset" };
   }
+}
+
+/** The address the request came from, for the per-IP half of the rate limit. */
+async function clientIp(): Promise<string> {
+  const { headers } = await import("next/headers");
+  const h = await headers();
+  const forwarded = h.get("x-forwarded-for");
+  if (forwarded) {
+    const parts = forwarded.split(",").map((s) => s.trim()).filter(Boolean);
+    // Rightmost, as in the login route: the leftmost is client-supplied and would
+    // let a caller rotate apparent addresses past the limit.
+    if (parts.length > 1) return parts[parts.length - 1];
+    return parts[0] ?? "unknown";
+  }
+  return h.get("x-real-ip") ?? "unknown";
 }
 
 const resetSchema = z
@@ -74,8 +104,8 @@ export async function completeResetAction(
   try {
     await completePasswordReset(parsed.data.token, parsed.data.password);
     revalidatePath("/", "layout");
-    // Straight to the login page with a note, so the person knows it worked
-    // rather than wondering why they have been bounced here.
+    // Straight to the login page with a note, so the person knows it worked rather
+    // than wondering why they have been bounced here.
     redirect("/login?reset=1");
   } catch (e) {
     if (e instanceof Error && e.message === "NEXT_REDIRECT") throw e;
