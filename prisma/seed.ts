@@ -447,7 +447,10 @@ async function seedBilling(ref: Ref, userIds: { adminId: string; managerId: stri
   }[] = [];
 
   for (let i = 0; i < 180; i++) {
-    const first = pick(FIRST_NAMES);
+    // The showcase data below looks this customer up by username ("nabila1"),
+    // so the first generated customer has to actually be Nabila. Picking a
+    // random first name and hoping is a one-in-thirty chance on every run.
+    const first = i === 0 ? "Nabila" : pick(FIRST_NAMES);
     const last = pick(LAST_NAMES);
     const name = `${first} ${last}`;
     const pkg = pick(ref.packages);

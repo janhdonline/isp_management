@@ -387,6 +387,31 @@ Created, Status, Action
 
 Priority: Low, Medium, High, Critical
 
+## 23. Configurable SLA + escalation
+
+Cards: SLA compliance %, breaches, worst offenders, countdowns
+
+Filters: Status, Priority, SLA breach status, Technician, Date
+
+Table: Ticket ID, Customer, Subject, Problem, Priority, Technician,
+SLA Due, SLA Status, Action
+
+**SLA Status:** Due (green), Breached (red), Overdue (amber)
+
+**SLA Countdown:** Visual countdown on ticket cards, turning red when overdue
+
+**Filters:**
+- All tickets
+- Not due yet
+- Due today
+- Breached (open)
+- Resolved breached
+
+**Actions:**
+- Escalate (manual) - Bump priority one level
+- Recompute SLA - Recalculate due date based on new priority
+- Send breach notification - Notify assignee + manager
+
 ## Ticket Details
 
 Show: Customer, Contact, Problem, Description, Priority, Technician,

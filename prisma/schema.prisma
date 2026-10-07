@@ -853,6 +853,15 @@ model Ticket {
   /// fact about a moment — a ticket closed after breaching was not escalated, and
   /// recomputing it from the timestamp would call it so for ever after.
   escalated    Boolean   @default(false)
+  slaBreached  Boolean   @default(false)
+  /// When the escalation job bumped this ticket's priority one level, if ever.
+  ///
+  /// Null until the first bump and never set again: the point of escalation is
+  /// that it happens once. Without this column the job would read `escalated:
+  /// true` and have no way to know whether it already raised the priority, so a
+  /// second run — or a manual re-run after a deploy — would bump it again, and a
+  /// ticket that started at High would end up Critical by accident.
+  priorityRaisedAt DateTime?
   status       String    @default("Open") // Open | Pending | In Progress | Resolved | Closed
   technicianId String?
   technician   Employee? @relation(fields: [technicianId], references: [id], onDelete: SetNull)
@@ -877,6 +886,7 @@ model Ticket {
   @@index([technicianId])
   @@index([escalated])
   @@index([slaDueAt])
+  @@index([slaBreached])
 }
 
 model TicketComment {

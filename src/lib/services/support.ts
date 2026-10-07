@@ -1,7 +1,4 @@
-import { prisma } from "@/lib/prisma";
-import { type Prisma } from "@/generated/prisma/client";
-import { DEFAULT_PER_PAGE, type ListParams, type ListResult } from "@/lib/query";
-import { round2, startOfDay, addDays } from "@/lib/utils";
+import { getSettings } from "@/lib/settings";
 import {
   TICKET_PRIORITIES,
   TICKET_STATUSES,
@@ -10,11 +7,14 @@ import {
   EMPLOYEE_STATUSES,
   LEAVE_STATUSES,
 } from "@/lib/enums";
+import { round2, startOfDay, addDays } from "@/lib/utils";
 
 const ticketInclude = {
   customer: { select: { id: true, name: true, username: true, customerCode: true, phone: true } },
   technician: { select: { id: true, name: true, phone: true } },
   area: { select: { id: true, name: true } },
+  slaDueAt: true,
+  slaBreached: true,
 } satisfies Prisma.TicketInclude;
 
 export type TicketRow = {
@@ -32,6 +32,8 @@ export type TicketRow = {
   customer: { id: string; name: string; username: string; customerCode: string; phone: string } | null;
   technician: { id: string; name: string; phone: string } | null;
   area: { id: string; name: string } | null;
+  slaDueAt: Date | null;
+  slaBreached: boolean;
   _count: { comments: number };
 };
 
@@ -69,6 +71,84 @@ export async function slaEscalate(now: Date = new Date()): Promise<number> {
     data: { escalated: false },
   });
   return escalated.count;
+}
+
+export async function slaWatch(now: Date = new Date()): Promise<number> {
+  const settings = await getSettings();
+  const autoEscalate = settings["sla.autoEscalate"] === "true";
+  
+  const openStatuses = ["Open", "Pending", "In Progress"];
+  
+  const breachedTickets = await prisma.ticket.findMany({
+    where: {
+      status: { in: openStatuses },
+      slaDueAt: { not: null, lte: now },
+      slaBreached: false,
+    },
+    select: {
+      id: true,
+      ticketNumber: true,
+      priority: true,
+      status: true,
+      slaDueAt: true,
+      escalated: true,
+      technician: {
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          email: true,
+        },
+      },
+      customer: {
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+        },
+      },
+    },
+  });
+
+  let notifiedCount = 0;
+  let escalatedCount = 0;
+
+  for (const ticket of breachedTickets) {
+    // Mark as breached
+    await prisma.ticket.update({
+      where: { id: ticket.id },
+      data: { slaBreached: true },
+    });
+
+    notifiedCount++;
+
+    // Auto-escalate if enabled and not already escalated
+    if (autoEscalate && !ticket.escalated) {
+      // Bump priority one level
+      const priorityOrder = ["Low", "Medium", "High", "Critical"];
+      const currentPriorityIndex = priorityOrder.indexOf(ticket.priority);
+      if (currentPriorityIndex < priorityOrder.length - 1) {
+        const nextPriority = priorityOrder[currentPriorityIndex + 1];
+        await prisma.ticket.update({
+          where: { id: ticket.id },
+          data: {
+            priority: nextPriority,
+            priorityRaisedAt: now,
+          },
+        });
+
+        // Clear escalated flag after bumping
+        await prisma.ticket.update({
+          where: { id: ticket.id },
+          data: { escalated: false },
+        });
+
+        escalatedCount++;
+      }
+    }
+  }
+
+  return notifiedCount + escalatedCount;
 }
 
 export async function listTickets(p: ListParams = {}): Promise<ListResult<TicketRow>> {
@@ -162,6 +242,15 @@ export async function listTickets(p: ListParams = {}): Promise<ListResult<Ticket
 export async function ticketMetrics() {
   const now = new Date();
   const weekAgo = addDays(now, -7);
+  
+  const settings = await getSettings();
+  const hours = {
+    critical: Number(settings["sla.hours.critical"] ?? "4"),
+    high: Number(settings["sla.hours.high"] ?? "24"),
+    medium: Number(settings["sla.hours.medium"] ?? "72"),
+    low: Number(settings["sla.hours.low"] ?? "168"),
+  };
+
   const [open, pending, inProgress, resolved, closed, slaBreached, oldest] = await Promise.all([
     prisma.ticket.count({ where: { status: "Open" } }),
     prisma.ticket.count({ where: { status: "Pending" } }),
@@ -169,7 +258,22 @@ export async function ticketMetrics() {
     prisma.ticket.count({ where: { status: "Resolved" } }),
     prisma.ticket.count({ where: { status: "Closed" } }),
     prisma.ticket.count({
-      where: { status: { in: ["Open", "Pending", "In Progress"] }, priority: "Critical", createdAt: { lt: addDays(now, -2) } },
+      where: {
+        OR: [
+          { status: "Open", priority: "Critical", slaDueAt: { not: null, lte: now } },
+          { status: "Pending", priority: "Critical", slaDueAt: { not: null, lte: now } },
+          { status: "In Progress", priority: "Critical", slaDueAt: { not: null, lte: now } },
+          { status: "Open", priority: "High", slaDueAt: { not: null, lte: addDays(now, hours.high) } },
+          { status: "Pending", priority: "High", slaDueAt: { not: null, lte: addDays(now, hours.high) } },
+          { status: "In Progress", priority: "High", slaDueAt: { not: null, lte: addDays(now, hours.high) } },
+          { status: "Open", priority: "Medium", slaDueAt: { not: null, lte: addDays(now, hours.medium) } },
+          { status: "Pending", priority: "Medium", slaDueAt: { not: null, lte: addDays(now, hours.medium) } },
+          { status: "In Progress", priority: "Medium", slaDueAt: { not: null, lte: addDays(now, hours.medium) } },
+          { status: "Open", priority: "Low", slaDueAt: { not: null, lte: addDays(now, hours.low) } },
+          { status: "Pending", priority: "Low", slaDueAt: { not: null, lte: addDays(now, hours.low) } },
+          { status: "In Progress", priority: "Low", slaDueAt: { not: null, lte: addDays(now, hours.low) } },
+        ],
+      },
     }),
     prisma.ticket.findFirst({
       where: { status: { in: ["Open", "Pending", "In Progress"] } },

@@ -84,6 +84,7 @@ export async function createTicketAction(_prev: ActionState, formData: FormData)
         // The seam Phase U reads. Nothing here decides whether an SLA was met —
         // that is the tracker's job, and this only says when the clock ran out.
         slaDueAt: sla.dueAt,
+        slaBreached: false,
         escalated: false,
       },
     });

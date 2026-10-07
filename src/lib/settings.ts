@@ -153,6 +153,33 @@ export const DEFAULT_SETTINGS: {
   /// worth paying for.
   { key: "corporate.defaultSlaHours", value: "4", group: "Billing" },
 
+  /// SLA hours per priority (Phase U).
+  ///
+  /// These are the default response-time windows used when a ticket has no
+  /// customer-specific override. A corporate customer's slaHours (Phase J) always
+  /// takes precedence at creation time. The values are hours, not days.
+  { key: "sla.hours.critical", value: "4", group: "Network" },
+  { key: "sla.hours.high", value: "24", group: "Network" },
+  { key: "sla.hours.medium", value: "72", group: "Network" },
+  { key: "sla.hours.low", value: "168", group: "Network" },
+
+  /// The notification channel for SLA breach alerts.
+  ///
+  /// One of: "telegram", "email", "sms". The channel must be configured in
+  /// Settings → API for the alert to be delivered. Off by default so an
+  /// operator must opt in after configuring the channel.
+  { key: "sla.alertChannel", value: "", group: "Network" },
+
+  /// The notification recipients for SLA breach alerts. Comma-separated list of
+  /// channel-specific addresses (chat IDs, email addresses, phone numbers).
+  /// Empty means the channel's default recipients are used.
+  { key: "sla.alertRecipients", value: "", group: "Network" },
+
+  /// Whether to auto-escalate a breached ticket by bumping its priority one
+  /// level. Off by default because priority changes are visible to the customer
+  /// and an unintended bump is a support escalation in itself.
+  { key: "sla.autoEscalate", value: "false", group: "Network" },
+
   /// Fiber fault localization (Phase L).
   ///
   /// ON, because it only ever acts on a transition — a device that was already
