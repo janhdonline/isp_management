@@ -62,32 +62,95 @@ export async function customerReport(range: ReportRange) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Billing reports                                                     */
+/* SLA compliance reports                                                */
 /* ------------------------------------------------------------------ */
 
-export async function billingReport(range: ReportRange) {
-  const where = { issueDate: { gte: range.from, lte: range.to } };
-  const [total, byStatus, sum, cancelled] = await Promise.all([
-    prisma.invoice.count({ where }),
-    prisma.invoice.groupBy({ by: ["status"], where, _count: { _all: true } }),
-    prisma.invoice.aggregate({
-      where: { ...where, status: { not: "Cancelled" } },
-      _sum: { total: true, paid: true, discount: true, vat: true },
+export async function slaComplianceReport(range: ReportRange) {
+  const now = new Date();
+  
+  const [byTechnician, byPriority, total, breached, overdueCount] = await Promise.all([
+    // SLA compliance per technician
+    prisma.ticket.groupBy({
+      by: ["technicianId"],
+      where: {
+        createdAt: { gte: range.from, lte: range.to },
+        status: { in: ["Open", "Pending", "In Progress"] },
+        slaBreached: true,
+      },
+      _count: { _all: true },
     }),
-    prisma.invoice.count({ where: { ...where, status: "Cancelled" } }),
+    // SLA compliance per priority
+    prisma.ticket.groupBy({
+      by: ["priority"],
+      where: {
+        createdAt: { gte: range.from, lte: range.to },
+        status: { in: ["Open", "Pending", "In Progress"] },
+        slaBreached: true,
+      },
+      _count: { _all: true },
+    }),
+    // Total tickets created in range
+    prisma.ticket.count({
+      where: { createdAt: { gte: range.from, lte: range.to } },
+    }),
+    // Total breached tickets in range (current status, not just newly created)
+    prisma.ticket.count({
+      where: {
+        status: { in: ["Open", "Pending", "In Progress"] },
+        slaBreached: true,
+      },
+    }),
+    // Overdue tickets (breached without status)
+    prisma.ticket.count({
+      where: {
+        status: { in: ["Open", "Pending", "In Progress"] },
+        slaBreached: true,
+        resolvedAt: null,
+        closedAt: null,
+      },
+    }),
   ]);
+
+  const technicians = await prisma.employee.findMany({
+    where: { role: { contains: "Technician" } },
+    select: { id: true, name: true, employeeCode: true },
+  });
 
   return {
     total,
-    cancelled,
-    billed: round2(sum._sum.total ?? 0),
-    collected: round2(sum._sum.paid ?? 0),
-    outstanding: round2((sum._sum.total ?? 0) - (sum._sum.paid ?? 0)),
-    discount: round2(sum._sum.discount ?? 0),
-    vat: round2(sum._sum.vat ?? 0),
-    byStatus: byStatus.map((s) => ({ label: s.status, value: s._count._all })),
+    totalBreachRate: total ? (breached / total) * 100 : 0,
+    byTechnician: technicians.map((t) => {
+      const data = byTechnician.find(r => r.technicianId === t.id);
+      return {
+        id: t.id,
+        name: t.name,
+        employeeCode: t.employeeCode,
+        total: data?._count._all ?? 0,
+        breachCount: data?._count._all ?? 0,
+        breachRate: data?._count._all ? ((data._count._all / total) * 100) : 0,
+      };
+    }),
+    byPriority: [
+      { label: "Low", value: byPriority.find(r => r.priority === "Low")?._count._all ?? 0 },
+      { label: "Medium", value: byPriority.find(r => r.priority === "Medium")?._count._all ?? 0 },
+      { label: "High", value: byPriority.find(r => r.priority === "High")?._count._all ?? 0 },
+      { label: "Critical", value: byPriority.find(r => r.priority === "Critical")?._count._all ?? 0 },
+    ],
+    breached,
+    breachCount: breached,
+    overdueCount,
+    metrics: {
+      total,
+      breached,
+      breachRate: total ? (breached / total) * 100 : 0,
+      overdueCount,
+    },
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* Existing reports continue...
+/* ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ */
 /* Collection report                                                   */

@@ -36,6 +36,8 @@ export type TicketRow = {
   createdAt: Date;
   /** Contract response time for a corporate client; null for a home customer. */
   slaDueAt: Date | null;
+  /** True once slaDueAt has passed and the ticket is still open. */
+  slaBreached: boolean;
   escalated: boolean;
   customer: { id: string; name: string; username: string; customerCode: string } | null;
   technician: { id: string; name: string } | null;
@@ -136,6 +138,50 @@ export function TicketsTable({
       exportValue: (t) => (t.escalated ? `${t.priority} (SLA breached)` : t.priority),
     },
     {
+      key: "slaDueAt",
+      header: "SLA Due",
+      hideBelow: "md",
+      cell: (t) => {
+        if (!t.slaDueAt) return null;
+        const now = new Date();
+        const due = new Date(t.slaDueAt);
+        const diffTime = due.getTime() - now.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        if (t.slaBreached) {
+          return (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-red-600 dark:text-red-400">Overdue</span>
+              <X className="h-3 w-3 text-red-600" />
+            </div>
+          );
+        }
+        
+        if (diffDays <= 0) {
+          return (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-amber-600 dark:text-amber-400">Due today</span>
+              <Badge variant="warning" className="text-[10px] h-5">!</Badge>
+            </div>
+          );
+        }
+        
+        if (diffDays <= 3) {
+          return (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-amber-600 dark:text-amber-400">In {diffDays} day{diffDays === 1 ? "" : "s"}</span>
+              <Badge variant="warning" className="text-[10px] h-5">!</Badge>
+            </div>
+          );
+        }
+        
+        return (
+          <span className="text-[10px] text-fg-subtle">{formatDate(t.slaDueAt)}</span>
+        );
+      },
+      exportValue: (t) => t.slaDueAt?.toISOString() ?? "",
+    },
+    {
       key: "technician",
       header: "Technician",
       hideBelow: "lg",
@@ -171,6 +217,16 @@ export function TicketsTable({
                 <FilterSelect param="status" placeholder="All statuses" options={TICKET_STATUSES.map((s) => ({ value: s, label: s }))} />
               ) : null}
               <FilterSelect param="priority" placeholder="All priorities" options={TICKET_PRIORITIES.map((p) => ({ value: p, label: p }))} />
+              <FilterSelect
+                param="slaBreached"
+                placeholder="All SLA statuses"
+                options={
+                  [
+                    { value: "true", label: "Breached" },
+                    { value: "false", label: "Not breached" },
+                  ]
+                }
+              />
               {showStatusColumn ? (
                 <FilterSelect param="technicianId" placeholder="All technicians" options={technicians.map((t) => ({ value: t.id, label: t.name }))} width="w-40" />
               ) : null}

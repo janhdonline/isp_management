@@ -115,6 +115,9 @@ export async function updateTicketAction(
     const session = await requirePermission("support.edit");
 
     const before = await prisma.ticket.findUniqueOrThrow({ where: { id } });
+    const customer = before.customerId
+      ? await prisma.customer.findUnique({ where: { id: before.customerId } })
+      : null;
 
     await prisma.$transaction(async (tx) => {
       const data: Record<string, unknown> = {};
@@ -130,7 +133,18 @@ export async function updateTicketAction(
           data.closedAt = null;
         }
       }
-      if (patch.priority && patch.priority !== before.priority) data.priority = patch.priority;
+      if (patch.priority && patch.priority !== before.priority) {
+        data.priority = patch.priority;
+        
+        // Recompute slaDueAt based on new priority and corporate override
+        const sla = slaTermsFor(
+          customer,
+          patch.priority,
+          resolveDefaultSlaHours((await getSettings())["corporate.defaultSlaHours"])
+        );
+        data.slaDueAt = sla.dueAt;
+        data.slaBreached = false; // Reset breach flag when priority changes
+      }
       if (patch.technicianId !== undefined && patch.technicianId !== before.technicianId) {
         data.technicianId = patch.technicianId || null;
       }

@@ -699,9 +699,14 @@ async function notifyFupExceeded(
  * Runs after `syncNetwork` in the job list, so it compares against the status
  * that sync just wrote rather than racing it.
  */
-export async function deviceHealthWatchJob(): Promise<JobResult> {
-  const { deviceHealthWatch } = await import("@/lib/services/device-alerts");
-  return deviceHealthWatch();
+export async function slaWatchJob(): Promise<JobResult> {
+  const { slaWatch } = await import("@/lib/services/support");
+  return slaWatch();
+}
+
+export async function slaEscalateJob(): Promise<JobResult> {
+  const { slaEscalate } = await import("@/lib/services/support");
+  return slaEscalate();
 }
 
 /**
@@ -788,6 +793,8 @@ export async function runAllJobs() {
     fup: enforceFup,
     backup: runScheduledBackup,
     radiusLogs: pruneRadiusLogs,
+    slaWatch: slaWatchJob,
+    slaEscalate: slaEscalateJob,
   })) {
     try {
       results[name] = await job();

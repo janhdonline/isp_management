@@ -42,6 +42,9 @@ export type TicketRow = {
  * longer warrant it.
  *
  * Idempotent and cheap: one update per direction, run when the queue is read.
+ *
+ * `escalated: true` means "the ticket's priority was auto-bumped once and should not be bumped again".
+ * The flag is cleared when the ticket is closed, has no deadline, or is still inside its deadline.
  */
 /** The statuses a ticket is still "outstanding" in. */
 const OPEN_TICKET_STATUSES = ["Open", "Pending", "In Progress"];
@@ -76,6 +79,8 @@ export async function slaEscalate(now: Date = new Date()): Promise<number> {
 export async function slaWatch(now: Date = new Date()): Promise<number> {
   const settings = await getSettings();
   const autoEscalate = settings["sla.autoEscalate"] === "true";
+  const alertChannel = settings["sla.alertChannel"] || "";
+  const alertRecipients = settings["sla.alertRecipients"] || "";
   
   const openStatuses = ["Open", "Pending", "In Progress"];
   
@@ -122,6 +127,25 @@ export async function slaWatch(now: Date = new Date()): Promise<number> {
 
     notifiedCount++;
 
+    // Send notifications if channel configured
+    if (alertChannel && alertRecipients) {
+      const recipientList = alertRecipients.split(",").map(r => r.trim()).filter(r => r);
+      
+      // Notify assignee if exists
+      if (ticket.technician?.phone) {
+        await dispatch(alertChannel, ticket.technician.phone, 
+          `SLA Breach: Ticket ${ticket.ticketNumber}`, 
+          `Your ticket "${ticket.ticketNumber}" is past its SLA due date (${ticket.slaDueAt?.toISOString().slice(0, 10)}). Priority has been auto-escalated.`);
+      }
+      
+      // Notify manager if exists (for now, use same notification)
+      if (ticket.customer?.phone) {
+        await dispatch(alertChannel, ticket.customer.phone,
+          `SLA Breach: Ticket ${ticket.ticketNumber} assigned to ${ticket.technician?.name || 'Unknown'}`, 
+          `Ticket ${ticket.ticketNumber} is past SLA. Assignee: ${ticket.technician?.name || 'Unknown'}. Due: ${ticket.slaDueAt?.toISOString().slice(0, 10)}.`);
+      }
+    }
+
     // Auto-escalate if enabled and not already escalated
     if (autoEscalate && !ticket.escalated) {
       // Bump priority one level
@@ -134,13 +158,8 @@ export async function slaWatch(now: Date = new Date()): Promise<number> {
           data: {
             priority: nextPriority,
             priorityRaisedAt: now,
+            escalated: true, // Mark that priority was auto-bumped
           },
-        });
-
-        // Clear escalated flag after bumping
-        await prisma.ticket.update({
-          where: { id: ticket.id },
-          data: { escalated: false },
         });
 
         escalatedCount++;
