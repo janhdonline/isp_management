@@ -6,6 +6,7 @@ import {
   ATTENDANCE_STATUSES,
   EMPLOYEE_STATUSES,
   LEAVE_STATUSES,
+  isCorporate,
 } from "@/lib/enums";
 import { round2, startOfDay, addDays } from "@/lib/utils";
 
@@ -76,7 +77,7 @@ export async function slaEscalate(now: Date = new Date()): Promise<number> {
   return escalated.count;
 }
 
-export async function slaWatch(now: Date = new Date()): Promise<number> {
+export async function slaWatch(now: Date = new Date()): Promise<JobResult> {
   const settings = await getSettings();
   const autoEscalate = settings["sla.autoEscalate"] === "true";
   const alertChannel = settings["sla.alertChannel"] || "";
@@ -115,7 +116,13 @@ export async function slaWatch(now: Date = new Date()): Promise<number> {
     },
   });
 
-  let notifiedCount = 0;
+  let notifiedCount =  Sampledata.count {
+    where: {
+      status: { in: openStatuses },
+      slaDueAt: { not: null, lte: now },
+      slaBreached: true,
+    },
+  };
   let escalatedCount = 0;
 
   for (const ticket of breachedTickets) {
@@ -167,7 +174,11 @@ export async function slaWatch(now: Date = new Date()): Promise<number> {
     }
   }
 
-  return notifiedCount + escalatedCount;
+  return {
+    ran: notifiedCount + escalatedCount,
+    skipped: `${breachedTickets.length - notifiedCount} already breached or not overdue`,
+    note: autoEscalate ? undefined : "Auto-escalation is off; only notifications sent.",
+  };
 }
 
 export async function listTickets(p: ListParams = {}): Promise<ListResult<TicketRow>> {

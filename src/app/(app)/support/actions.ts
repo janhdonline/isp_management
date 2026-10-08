@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSettings } from "@/lib/settings";
-import { slaTermsFor, resolveDefaultSlaHours } from "@/lib/services/corporate";
+import { slaDueAtFor, slaTermsFor, resolveDefaultSlaHours } from "@/lib/services/corporate";
 import { type Prisma } from "@/generated/prisma/client";
 import { requirePermission } from "@/lib/auth";
 import { nextNumber, type Tx } from "@/lib/counter";
@@ -54,15 +54,12 @@ export async function createTicketAction(_prev: ActionState, formData: FormData)
     ? await prisma.customer.findUnique({ where: { id: d.customerId } })
     : null;
 
-  // Corporate and dedicated accounts carry a contracted response time, so a ticket
-  // against one starts at High with a deadline attached. A Home customer is
-  // untouched: same priority the form asked for, no deadline, nothing to escalate.
-  // The rule lives in a service so it can be tested — a server action module
-  // cannot be imported from a test at all.
-  const sla = slaTermsFor(
+  const settings = await getSettings();
+  const slaDueAt = slaDueAtFor(
     customer,
     d.priority,
-    resolveDefaultSlaHours((await getSettings())["corporate.defaultSlaHours"])
+    settings,
+    new Date()
   );
 
   const ticket = await prisma.$transaction(async (tx) => {
@@ -77,13 +74,13 @@ export async function createTicketAction(_prev: ActionState, formData: FormData)
         problem: d.category,
         category: d.category,
         description: d.description || null,
-        priority: sla.priority,
+        priority: d.priority,
         status: "Open",
         technicianId: d.technicianId || null,
         createdById: session.id,
         // The seam Phase U reads. Nothing here decides whether an SLA was met —
         // that is the tracker's job, and this only says when the clock ran out.
-        slaDueAt: sla.dueAt,
+        slaDueAt: slaDueAt,
         slaBreached: false,
         escalated: false,
       },
@@ -100,12 +97,11 @@ export async function createTicketAction(_prev: ActionState, formData: FormData)
   revalidatePath("/dashboard");
   return {
     success: `Ticket ${ticket.ticketNumber} created.${
-      sla.dueAt
-        ? ` Response due by ${sla.dueAt.toISOString().slice(0, 16).replace("T", " ")} (${sla.hours}h SLA).`
+      slaDueAt
+        ? ` Response due by ${slaDueAt.toISOString().slice(0, 16).replace("T", " ")} (${sla.hours}h SLA).`
         : ""
     }`,
   };
-}
 
 export async function updateTicketAction(
   id: string,
@@ -118,6 +114,8 @@ export async function updateTicketAction(
     const customer = before.customerId
       ? await prisma.customer.findUnique({ where: { id: before.customerId } })
       : null;
+
+    const settings = await getSettings();
 
     await prisma.$transaction(async (tx) => {
       const data: Record<string, unknown> = {};
@@ -137,12 +135,13 @@ export async function updateTicketAction(
         data.priority = patch.priority;
         
         // Recompute slaDueAt based on new priority and corporate override
-        const sla = slaTermsFor(
+        const slaDueAt = slaDueAtFor(
           customer,
           patch.priority,
-          resolveDefaultSlaHours((await getSettings())["corporate.defaultSlaHours"])
+          settings,
+          new Date()
         );
-        data.slaDueAt = sla.dueAt;
+        data.slaDueAt = slaDueAt;
         data.slaBreached = false; // Reset breach flag when priority changes
       }
       if (patch.technicianId !== undefined && patch.technicianId !== before.technicianId) {
